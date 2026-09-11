@@ -111,6 +111,9 @@ function activateTab(id) {
   activeTabId = id;
   mainWindow.setBrowserView(tab.view);
   layoutActiveView();
+  // Trocar o BrowserView não move o foco de teclado sozinho — sem isso, os
+  // atalhos só voltam a funcionar depois de um clique manual na aba.
+  tab.view.webContents.focus();
   sendTabsUpdate();
 }
 
