@@ -1,4 +1,4 @@
-const { app, BrowserWindow, BrowserView, ipcMain } = require('electron');
+const { app, BrowserWindow, BrowserView, ipcMain, Menu } = require('electron');
 const path = require('path');
 
 // Altura da barra de UI (abas + endereço) em pixels.
@@ -9,6 +9,11 @@ let mainWindow;
 let tabs = [];      // cada item: { id, view, title, url }
 let activeTabId = null;
 let nextTabId = 1;
+let downloads = []; // { filename, path, url, state, startedAt }
+// Espaço extra reservado no topo quando um painel (busca/downloads) está
+// aberto. O BrowserView fica acima do DOM da janela, então "abrir" um
+// painel HTML não basta: é preciso empurrar o BrowserView pra baixo.
+let overlayReserved = 0;
 
 function getActiveTab() {
   return tabs.find((t) => t.id === activeTabId);
@@ -18,18 +23,32 @@ function layoutActiveView() {
   const tab = getActiveTab();
   if (!tab) return;
   const bounds = mainWindow.getContentBounds();
+  const top = UI_HEIGHT + overlayReserved;
   tab.view.setBounds({
     x: 0,
-    y: UI_HEIGHT,
+    y: top,
     width: bounds.width,
-    height: bounds.height - UI_HEIGHT,
+    height: Math.max(bounds.height - top, 0),
   });
+}
+
+function switchTab(direction) {
+  const idx = tabs.findIndex((t) => t.id === activeTabId);
+  if (idx === -1 || tabs.length < 2) return;
+  const next = (idx + direction + tabs.length) % tabs.length;
+  activateTab(tabs[next].id);
 }
 
 function sendTabsUpdate() {
   const tab = getActiveTab();
   mainWindow.webContents.send('tabs:update', {
-    tabs: tabs.map((t) => ({ id: t.id, title: t.title, url: t.url })),
+    tabs: tabs.map((t) => ({
+      id: t.id,
+      title: t.title,
+      url: t.url,
+      muted: t.muted,
+      audible: t.view.webContents.isCurrentlyAudible(),
+    })),
     activeTabId,
     canGoBack: tab ? tab.view.webContents.canGoBack() : false,
     canGoForward: tab ? tab.view.webContents.canGoForward() : false,
@@ -45,7 +64,7 @@ function createTab(url = 'https://duckduckgo.com') {
     },
   });
 
-  const tab = { id, view, title: 'Nova aba', url };
+  const tab = { id, view, title: 'Nova aba', url, muted: false };
   tabs.push(tab);
 
   view.webContents.on('page-title-updated', (_e, title) => {
@@ -59,6 +78,26 @@ function createTab(url = 'https://duckduckgo.com') {
   view.webContents.on('did-navigate-in-page', (_e, navUrl) => {
     tab.url = navUrl;
     sendTabsUpdate();
+  });
+  view.webContents.on('before-input-event', (event, input) => {
+    if (handleShortcut(input)) event.preventDefault();
+  });
+  view.webContents.on('audio-state-changed', () => {
+    sendTabsUpdate();
+  });
+  view.webContents.session.on('will-download', (_e, item) => {
+    const entry = {
+      filename: item.getFilename(),
+      path: item.getSavePath() || item.getFilename(),
+      url: item.getURL(),
+      state: 'progressing',
+      startedAt: Date.now(),
+    };
+    downloads.unshift(entry);
+    item.once('done', (_e2, state) => {
+      entry.state = state;
+      entry.path = item.getSavePath() || entry.path;
+    });
   });
 
   view.webContents.loadURL(url);
@@ -94,6 +133,46 @@ function closeTab(id) {
   sendTabsUpdate();
 }
 
+// Atalhos de teclado (issue #6). Registrado tanto no webContents da janela
+// principal quanto no de cada BrowserView, já que o BrowserView tem seu
+// próprio webContents e não recebe eventos de teclado da janela.
+function handleShortcut(input) {
+  if (input.type !== 'keyDown') return false;
+  const key = input.key.toLowerCase();
+  const ctrl = input.control;
+  const shift = input.shift;
+  const tab = getActiveTab();
+
+  if (ctrl && key === 't') { createTab(); return true; }
+  if (ctrl && key === 'w') { if (activeTabId != null) closeTab(activeTabId); return true; }
+  if (ctrl && key === 'tab') { switchTab(shift ? -1 : 1); return true; }
+  if (ctrl && key === 'l') { mainWindow.webContents.send('ui:focus-address'); return true; }
+  if ((ctrl && key === 'r') || key === 'f5') { if (tab) tab.view.webContents.reload(); return true; }
+  if (ctrl && key === 'd') { mainWindow.webContents.send('ui:toggle-downloads', downloads); return true; }
+  if (ctrl && key === 'f') { mainWindow.webContents.send('ui:toggle-findbar'); return true; }
+  if (ctrl && key === 's') {
+    if (tab) {
+      const safeName = (tab.title || 'pagina').replace(/[\\/:*?"<>|]/g, '_');
+      const dest = path.join(app.getPath('downloads'), `${safeName}.html`);
+      tab.view.webContents
+        .savePage(dest, 'HTMLComplete')
+        .then(() => downloads.unshift({ filename: `${safeName}.html`, path: dest, url: tab.url, state: 'completed', startedAt: Date.now() }))
+        .catch(() => {});
+    }
+    return true;
+  }
+  if (ctrl && key === 'p') { if (tab) tab.view.webContents.print(); return true; }
+  if (ctrl && key === 'm') {
+    if (tab) {
+      tab.muted = !tab.muted;
+      tab.view.webContents.setAudioMuted(tab.muted);
+      sendTabsUpdate();
+    }
+    return true;
+  }
+  return false;
+}
+
 function createMainWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -107,6 +186,10 @@ function createMainWindow() {
   mainWindow.loadFile('index.html');
   mainWindow.on('resize', layoutActiveView);
 
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (handleShortcut(input)) event.preventDefault();
+  });
+
   mainWindow.webContents.on('did-finish-load', () => {
     createTab();
   });
@@ -117,6 +200,13 @@ function createMainWindow() {
 ipcMain.handle('tabs:new', () => createTab());
 ipcMain.handle('tabs:close', (_e, id) => closeTab(id));
 ipcMain.handle('tabs:activate', (_e, id) => activateTab(id));
+ipcMain.handle('tabs:toggleMute', (_e, id) => {
+  const tab = tabs.find((t) => t.id === id);
+  if (!tab) return;
+  tab.muted = !tab.muted;
+  tab.view.webContents.setAudioMuted(tab.muted);
+  sendTabsUpdate();
+});
 
 ipcMain.handle('nav:go', (_e, urlOrQuery) => {
   const tab = getActiveTab();
@@ -146,7 +236,36 @@ ipcMain.handle('nav:reload', () => {
   if (tab) tab.view.webContents.reload();
 });
 
-app.whenReady().then(createMainWindow);
+ipcMain.handle('downloads:get', () => downloads);
+
+ipcMain.handle('ui:set-overlay-height', (_e, px) => {
+  overlayReserved = typeof px === 'number' && px > 0 ? px : 0;
+  layoutActiveView();
+});
+
+ipcMain.handle('find:start', (_e, text) => {
+  const tab = getActiveTab();
+  if (tab && text) tab.view.webContents.findInPage(text);
+});
+ipcMain.handle('find:next', (_e, text) => {
+  const tab = getActiveTab();
+  if (tab && text) tab.view.webContents.findInPage(text, { forward: true, findNext: true });
+});
+ipcMain.handle('find:prev', (_e, text) => {
+  const tab = getActiveTab();
+  if (tab && text) tab.view.webContents.findInPage(text, { forward: false, findNext: true });
+});
+ipcMain.handle('find:stop', () => {
+  const tab = getActiveTab();
+  if (tab) tab.view.webContents.stopFindInPage('clearSelection');
+});
+
+app.whenReady().then(() => {
+  // Sem isso, o menu padrão do Electron reserva Ctrl+R para recarregar a
+  // janela principal (index.html) e colidiria com o Ctrl+R de recarregar a aba.
+  Menu.setApplicationMenu(null);
+  createMainWindow();
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
