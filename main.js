@@ -187,7 +187,13 @@ function handleShortcut(input) {
   if (ctrl && key === 't') { createTab(); return true; }
   if (ctrl && key === 'w') { if (activeTabId != null) closeTab(activeTabId); return true; }
   if (ctrl && key === 'tab') { if (shift) switchTab(-1); else goToLastTab(); return true; }
-  if (ctrl && key === 'l') { mainWindow.webContents.send('ui:focus-address'); return true; }
+  if (ctrl && key === 'l') {
+    // Sem isso, o BrowserView da aba continua com o foco de teclado do SO
+    // e a digitação não chega no input, mesmo após o focus() no DOM.
+    mainWindow.webContents.focus();
+    mainWindow.webContents.send('ui:focus-address');
+    return true;
+  }
   if ((ctrl && key === 'r') || key === 'f5') { if (tab) tab.view.webContents.reload(); return true; }
   if (ctrl && key === 'h') {
     const existing = tabs.find((t) => t.url === HISTORY_URL);
