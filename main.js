@@ -12,6 +12,7 @@ const UI_HEIGHT = 84;
 let mainWindow;
 let tabs = [];      // cada item: { id, view, title, url }
 let activeTabId = null;
+let previousTabId = null; // última aba ativa antes da atual, para Ctrl+Tab
 let nextTabId = 1;
 let history = [];   // { id, url, title, timestamp }
 let nextHistoryId = 1;
@@ -115,9 +116,19 @@ function createTab(url = 'https://duckduckgo.com', preloadPath) {
   return id;
 }
 
+function goToLastTab() {
+  if (previousTabId == null) return;
+  const tab = tabs.find((t) => t.id === previousTabId);
+  if (!tab) { previousTabId = null; return; }
+  activateTab(tab.id);
+}
+
 function activateTab(id) {
   const tab = tabs.find((t) => t.id === id);
   if (!tab) return;
+  if (activeTabId != null && activeTabId !== id) {
+    previousTabId = activeTabId;
+  }
   activeTabId = id;
   mainWindow.setBrowserView(tab.view);
   layoutActiveView();
@@ -175,7 +186,7 @@ function handleShortcut(input) {
 
   if (ctrl && key === 't') { createTab(); return true; }
   if (ctrl && key === 'w') { if (activeTabId != null) closeTab(activeTabId); return true; }
-  if (ctrl && key === 'tab') { switchTab(shift ? -1 : 1); return true; }
+  if (ctrl && key === 'tab') { if (shift) switchTab(-1); else goToLastTab(); return true; }
   if (ctrl && key === 'l') { mainWindow.webContents.send('ui:focus-address'); return true; }
   if ((ctrl && key === 'r') || key === 'f5') { if (tab) tab.view.webContents.reload(); return true; }
   if (ctrl && key === 'h') {
