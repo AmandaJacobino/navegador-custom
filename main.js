@@ -1,4 +1,4 @@
-const { app, BrowserWindow, BrowserView, ipcMain, Menu, shell } = require('electron');
+const { app, BrowserWindow, BrowserView, ipcMain, Menu, shell, dialog } = require('electron');
 const path = require('path');
 
 const HISTORY_PRELOAD = path.join(__dirname, 'history-preload.js');
@@ -263,14 +263,20 @@ function handleShortcut(input) {
   if (ctrl && key === 's') {
     if (tab) {
       const safeName = (tab.title || 'pagina').replace(/[\\/:*?"<>|]/g, '_');
-      const dest = path.join(app.getPath('downloads'), `${safeName}.html`);
-      tab.view.webContents
-        .savePage(dest, 'HTMLComplete')
-        .then(() => {
-          downloads.unshift({ filename: `${safeName}.html`, path: dest, url: tab.url, state: 'completed', startedAt: Date.now() });
-          sendDownloadsUpdate();
+      dialog
+        .showSaveDialog(mainWindow, {
+          defaultPath: path.join(app.getPath('downloads'), `${safeName}.html`),
+          filters: [{ name: 'Página HTML', extensions: ['html'] }],
         })
-        .catch(() => {});
+        .then(({ canceled, filePath }) => {
+          if (canceled || !filePath) return;
+          return tab.view.webContents.savePage(filePath, 'HTMLComplete').then(() => {
+            downloads.unshift({ filename: path.basename(filePath), path: filePath, url: tab.url, state: 'completed', startedAt: Date.now() });
+            sendDownloadsUpdate();
+            openDownloadsWindow();
+          });
+        })
+        .catch((err) => console.error('Ctrl+S savePage failed:', err));
     }
     return true;
   }
