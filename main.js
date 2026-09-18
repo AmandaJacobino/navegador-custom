@@ -1,5 +1,9 @@
 const { app, BrowserWindow, BrowserView, ipcMain, Menu } = require('electron');
 const path = require('path');
+const { pathToFileURL } = require('url');
+
+const HISTORY_URL = pathToFileURL(path.join(__dirname, 'history.html')).toString();
+const HISTORY_PRELOAD = path.join(__dirname, 'history-preload.js');
 
 // Altura da barra de UI (abas + endereço) em pixels.
 // As páginas web (BrowserView) começam abaixo dessa altura.
@@ -9,6 +13,8 @@ let mainWindow;
 let tabs = [];      // cada item: { id, view, title, url }
 let activeTabId = null;
 let nextTabId = 1;
+let history = [];   // { id, url, title, timestamp }
+let nextHistoryId = 1;
 let downloads = []; // { filename, path, url, state, startedAt }
 // Espaço extra reservado no topo quando um painel (busca/downloads) está
 // aberto. O BrowserView fica acima do DOM da janela, então "abrir" um
@@ -55,12 +61,13 @@ function sendTabsUpdate() {
   });
 }
 
-function createTab(url = 'https://duckduckgo.com') {
+function createTab(url = 'https://duckduckgo.com', preloadPath) {
   const id = nextTabId++;
   const view = new BrowserView({
     webPreferences: {
       contextIsolation: true,
       sandbox: true,
+      ...(preloadPath ? { preload: preloadPath } : {}),
     },
   });
 
@@ -73,6 +80,9 @@ function createTab(url = 'https://duckduckgo.com') {
   });
   view.webContents.on('did-navigate', (_e, navUrl) => {
     tab.url = navUrl;
+    if (navUrl !== HISTORY_URL) {
+      history.unshift({ id: nextHistoryId++, url: navUrl, title: tab.title, timestamp: Date.now() });
+    }
     sendTabsUpdate();
   });
   view.webContents.on('did-navigate-in-page', (_e, navUrl) => {
@@ -136,6 +146,23 @@ function closeTab(id) {
   sendTabsUpdate();
 }
 
+function filterHistory(range) {
+  const now = Date.now();
+  const startOfToday = new Date().setHours(0, 0, 0, 0);
+  if (range === 'yesterday') {
+    const startOfYesterday = startOfToday - 24 * 60 * 60 * 1000;
+    return history.filter((h) => h.timestamp >= startOfYesterday && h.timestamp < startOfToday);
+  }
+  const rangeStarts = {
+    today: startOfToday,
+    '7days': now - 7 * 24 * 60 * 60 * 1000,
+    '30days': now - 30 * 24 * 60 * 60 * 1000,
+    all: 0,
+  };
+  const since = rangeStarts[range] ?? startOfToday;
+  return history.filter((h) => h.timestamp >= since);
+}
+
 // Atalhos de teclado (issue #6). Registrado tanto no webContents da janela
 // principal quanto no de cada BrowserView, já que o BrowserView tem seu
 // próprio webContents e não recebe eventos de teclado da janela.
@@ -151,6 +178,12 @@ function handleShortcut(input) {
   if (ctrl && key === 'tab') { switchTab(shift ? -1 : 1); return true; }
   if (ctrl && key === 'l') { mainWindow.webContents.send('ui:focus-address'); return true; }
   if ((ctrl && key === 'r') || key === 'f5') { if (tab) tab.view.webContents.reload(); return true; }
+  if (ctrl && key === 'h') {
+    const existing = tabs.find((t) => t.url === HISTORY_URL);
+    if (existing) activateTab(existing.id);
+    else createTab(HISTORY_URL, HISTORY_PRELOAD);
+    return true;
+  }
   if (ctrl && key === 'd') { mainWindow.webContents.send('ui:toggle-downloads', downloads); return true; }
   if (ctrl && key === 'f') { mainWindow.webContents.send('ui:toggle-findbar'); return true; }
   if (ctrl && key === 's') {
@@ -239,6 +272,13 @@ ipcMain.handle('nav:reload', () => {
   if (tab) tab.view.webContents.reload();
 });
 
+ipcMain.handle('history:get', (_e, range) => filterHistory(range));
+ipcMain.handle('history:delete', (_e, id) => {
+  history = history.filter((h) => h.id !== id);
+});
+ipcMain.handle('history:clear', () => {
+  history = [];
+});
 ipcMain.handle('downloads:get', () => downloads);
 
 ipcMain.handle('ui:set-overlay-height', (_e, px) => {
