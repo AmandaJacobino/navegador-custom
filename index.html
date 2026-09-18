@@ -56,6 +56,13 @@
     color: var(--text);
   }
 
+  .tab.dragging {
+    position: relative;
+    z-index: 5;
+    cursor: grabbing;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  }
+
   .tab .title {
     flex: 1;
     overflow: hidden;

@@ -370,6 +370,16 @@ ipcMain.handle('tabs:toggleMute', (_e, id) => {
   tab.view.webContents.setAudioMuted(tab.muted);
   sendTabsUpdate();
 });
+ipcMain.handle('tabs:reorder', (_e, orderedIds) => {
+  if (!Array.isArray(orderedIds)) return;
+  const byId = new Map(tabs.map((t) => [t.id, t]));
+  const reordered = orderedIds.map((id) => byId.get(id)).filter(Boolean);
+  // Segurança: qualquer aba fora da lista (condição de corrida improvável)
+  // vai pro fim, em vez de desaparecer.
+  tabs.forEach((t) => { if (!orderedIds.includes(t.id)) reordered.push(t); });
+  tabs = reordered;
+  sendTabsUpdate();
+});
 
 ipcMain.handle('nav:go', (_e, urlOrQuery) => {
   const tab = getActiveTab();
