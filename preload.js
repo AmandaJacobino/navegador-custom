@@ -15,8 +15,6 @@ contextBridge.exposeInMainWorld('browserAPI', {
     ipcRenderer.on('tabs:update', (_e, data) => callback(data)),
   onFocusAddress: (callback) => ipcRenderer.on('ui:focus-address', () => callback()),
   onToggleFindbar: (callback) => ipcRenderer.on('ui:toggle-findbar', () => callback()),
-  onToggleDownloads: (callback) =>
-    ipcRenderer.on('ui:toggle-downloads', (_e, items) => callback(items)),
   setOverlayHeight: (px) => ipcRenderer.invoke('ui:set-overlay-height', px),
   findStart: (text) => ipcRenderer.invoke('find:start', text),
   findNext: (text) => ipcRenderer.invoke('find:next', text),
