@@ -4,7 +4,9 @@
   "description": "Navegador pessoal com interface própria sobre o motor Chromium (Electron)",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "dev": "electron . --no-sandbox --ozone-platform=wayland",
+    "watch": "bun --watch run dev"
   },
   "devDependencies": {
     "electron": "^31.7.7"

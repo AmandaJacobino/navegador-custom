@@ -68,6 +68,14 @@
   }
   .tab .close:hover { opacity: 1; }
 
+  .tab .mute-icon {
+    opacity: 0.8;
+    padding: 0 2px;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .tab .mute-icon:hover { opacity: 1; }
+
   #new-tab-btn {
     -webkit-app-region: no-drag;
     color: var(--text-muted);
@@ -116,6 +124,41 @@
     outline: none;
   }
   #address:focus { border-color: var(--accent); }
+
+  .hidden { display: none !important; }
+
+  /* Altura fixa: precisa bater com FINDBAR_HEIGHT/PANEL_HEIGHT em renderer.js,
+     que usam esse valor pra empurrar o BrowserView pra baixo. */
+  #findbar {
+    -webkit-app-region: no-drag;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 40px;
+    padding: 0 10px;
+    background: var(--bg-elevated);
+    border-bottom: 1px solid var(--border);
+  }
+  #findbar input {
+    flex: 1;
+    max-width: 240px;
+    height: 26px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    padding: 0 8px;
+    font-size: 12px;
+    outline: none;
+  }
+  #findbar button {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 14px;
+    cursor: pointer;
+  }
+  #findbar button:hover { color: var(--text); }
 </style>
 </head>
 <body>
@@ -130,6 +173,13 @@
     <button id="btn-forward" title="Avançar">→</button>
     <button id="btn-reload" title="Recarregar">⟳</button>
     <input id="address" type="text" placeholder="Buscar ou digitar um endereço" />
+  </div>
+
+  <div id="findbar" class="hidden">
+    <input id="find-input" type="text" placeholder="Buscar na página" />
+    <button id="find-prev" title="Anterior">↑</button>
+    <button id="find-next" title="Próximo">↓</button>
+    <button id="find-close" title="Fechar">✕</button>
   </div>
 
   <script src="renderer.js"></script>
