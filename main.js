@@ -1,15 +1,16 @@
-const { app, BrowserWindow, BrowserView, ipcMain, Menu } = require('electron');
+const { app, BrowserWindow, BrowserView, ipcMain, Menu, shell } = require('electron');
 const path = require('path');
-const { pathToFileURL } = require('url');
 
-const HISTORY_URL = pathToFileURL(path.join(__dirname, 'history.html')).toString();
 const HISTORY_PRELOAD = path.join(__dirname, 'history-preload.js');
+const DOWNLOADS_PRELOAD = path.join(__dirname, 'downloads-preload.js');
 
 // Altura da barra de UI (abas + endereço) em pixels.
 // As páginas web (BrowserView) começam abaixo dessa altura.
 const UI_HEIGHT = 84;
 
 let mainWindow;
+let historyWindow = null;   // janela independente de histórico (Ctrl+H)
+let downloadsWindow = null; // janela independente de downloads (Ctrl+D)
 let tabs = [];      // cada item: { id, view, title, url }
 let activeTabId = null;
 let previousTabId = null; // última aba ativa antes da atual, para Ctrl+Tab
@@ -24,6 +25,68 @@ let overlayReserved = 0;
 
 function getActiveTab() {
   return tabs.find((t) => t.id === activeTabId);
+}
+
+function sendDownloadsUpdate() {
+  if (downloadsWindow && !downloadsWindow.isDestroyed()) {
+    downloadsWindow.webContents.send('downloads:update', downloads);
+  }
+}
+
+// Fecha a própria janela com Ctrl+W, igual ao comportamento de fechar aba
+// na janela principal.
+function closeOnCtrlW(win) {
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.type === 'keyDown' && input.control && input.key.toLowerCase() === 'w') {
+      event.preventDefault();
+      win.close();
+    }
+  });
+}
+
+// Janela independente de histórico (issue #6, Ctrl+H).
+function openHistoryWindow() {
+  if (historyWindow && !historyWindow.isDestroyed()) {
+    historyWindow.focus();
+    return;
+  }
+  historyWindow = new BrowserWindow({
+    width: 480,
+    height: 600,
+    title: 'Histórico',
+    webPreferences: {
+      preload: HISTORY_PRELOAD,
+      contextIsolation: true,
+      sandbox: true,
+    },
+  });
+  historyWindow.setMenuBarVisibility(false);
+  historyWindow.loadFile('history.html');
+  closeOnCtrlW(historyWindow);
+  historyWindow.on('closed', () => { historyWindow = null; });
+}
+
+// Janela independente de downloads (issue #6, Ctrl+D). Separada da janela
+// principal porque downloads não fazem parte da navegação por abas.
+function openDownloadsWindow() {
+  if (downloadsWindow && !downloadsWindow.isDestroyed()) {
+    downloadsWindow.focus();
+    return;
+  }
+  downloadsWindow = new BrowserWindow({
+    width: 480,
+    height: 600,
+    title: 'Downloads',
+    webPreferences: {
+      preload: DOWNLOADS_PRELOAD,
+      contextIsolation: true,
+      sandbox: true,
+    },
+  });
+  downloadsWindow.setMenuBarVisibility(false);
+  downloadsWindow.loadFile('downloads.html');
+  closeOnCtrlW(downloadsWindow);
+  downloadsWindow.on('closed', () => { downloadsWindow = null; });
 }
 
 function layoutActiveView() {
@@ -62,13 +125,12 @@ function sendTabsUpdate() {
   });
 }
 
-function createTab(url = 'https://duckduckgo.com', preloadPath) {
+function createTab(url = 'https://duckduckgo.com') {
   const id = nextTabId++;
   const view = new BrowserView({
     webPreferences: {
       contextIsolation: true,
       sandbox: true,
-      ...(preloadPath ? { preload: preloadPath } : {}),
     },
   });
 
@@ -81,9 +143,7 @@ function createTab(url = 'https://duckduckgo.com', preloadPath) {
   });
   view.webContents.on('did-navigate', (_e, navUrl) => {
     tab.url = navUrl;
-    if (navUrl !== HISTORY_URL) {
-      history.unshift({ id: nextHistoryId++, url: navUrl, title: tab.title, timestamp: Date.now() });
-    }
+    history.unshift({ id: nextHistoryId++, url: navUrl, title: tab.title, timestamp: Date.now() });
     sendTabsUpdate();
   });
   view.webContents.on('did-navigate-in-page', (_e, navUrl) => {
@@ -105,9 +165,11 @@ function createTab(url = 'https://duckduckgo.com', preloadPath) {
       startedAt: Date.now(),
     };
     downloads.unshift(entry);
+    sendDownloadsUpdate();
     item.once('done', (_e2, state) => {
       entry.state = state;
       entry.path = item.getSavePath() || entry.path;
+      sendDownloadsUpdate();
     });
   });
 
@@ -195,13 +257,8 @@ function handleShortcut(input) {
     return true;
   }
   if ((ctrl && key === 'r') || key === 'f5') { if (tab) tab.view.webContents.reload(); return true; }
-  if (ctrl && key === 'h') {
-    const existing = tabs.find((t) => t.url === HISTORY_URL);
-    if (existing) activateTab(existing.id);
-    else createTab(HISTORY_URL, HISTORY_PRELOAD);
-    return true;
-  }
-  if (ctrl && key === 'd') { mainWindow.webContents.send('ui:toggle-downloads', downloads); return true; }
+  if (ctrl && key === 'h') { openHistoryWindow(); return true; }
+  if (ctrl && key === 'd') { openDownloadsWindow(); return true; }
   if (ctrl && key === 'f') { mainWindow.webContents.send('ui:toggle-findbar'); return true; }
   if (ctrl && key === 's') {
     if (tab) {
@@ -209,7 +266,10 @@ function handleShortcut(input) {
       const dest = path.join(app.getPath('downloads'), `${safeName}.html`);
       tab.view.webContents
         .savePage(dest, 'HTMLComplete')
-        .then(() => downloads.unshift({ filename: `${safeName}.html`, path: dest, url: tab.url, state: 'completed', startedAt: Date.now() }))
+        .then(() => {
+          downloads.unshift({ filename: `${safeName}.html`, path: dest, url: tab.url, state: 'completed', startedAt: Date.now() });
+          sendDownloadsUpdate();
+        })
         .catch(() => {});
     }
     return true;
@@ -297,6 +357,7 @@ ipcMain.handle('history:clear', () => {
   history = [];
 });
 ipcMain.handle('downloads:get', () => downloads);
+ipcMain.handle('downloads:showInFolder', (_e, filePath) => shell.showItemInFolder(filePath));
 
 ipcMain.handle('ui:set-overlay-height', (_e, px) => {
   overlayReserved = typeof px === 'number' && px > 0 ? px : 0;

@@ -17,8 +17,8 @@ The foundation (Milestone 1) is complete, and most of the everyday-usability mil
 - Default search via DuckDuckGo
 - Keyboard shortcuts: `Ctrl+T`, `Ctrl+W`, `Ctrl+Tab`/`Ctrl+Shift+Tab`, `Ctrl+L`, `Ctrl+R`/`F5`, `Ctrl+D`, `Ctrl+F`, `Ctrl+S`, `Ctrl+P`, `Ctrl+M`
 - In-page find (`Ctrl+F`) with next/previous navigation
-- Downloads panel (`Ctrl+D`) tracking in-progress and completed downloads
-- Dedicated history tab (`Ctrl+H`) with Today/Yesterday/Last 7 days/Last 30 days/All filters, per-item deletion, and clear-all
+- Independent downloads window (`Ctrl+D`) tracking in-progress and completed downloads
+- Independent history window (`Ctrl+H`) with Today/Yesterday/Last 7 days/Last 30 days/All filters, per-item deletion, and clear-all
 - Tab audio mute/unmute with a clickable indicator icon
 
 ### Pending
