@@ -366,7 +366,9 @@ ipcMain.handle('ui:set-overlay-height', (_e, px) => {
 
 ipcMain.handle('find:start', (_e, text) => {
   const tab = getActiveTab();
-  if (tab && text) tab.view.webContents.findInPage(text);
+  if (!tab) return;
+  if (text) tab.view.webContents.findInPage(text);
+  else tab.view.webContents.stopFindInPage('clearSelection');
 });
 ipcMain.handle('find:next', (_e, text) => {
   const tab = getActiveTab();
