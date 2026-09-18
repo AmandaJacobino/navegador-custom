@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('browserAPI', {
   closeTab: (id) => ipcRenderer.invoke('tabs:close', id),
   activateTab: (id) => ipcRenderer.invoke('tabs:activate', id),
   toggleMute: (id) => ipcRenderer.invoke('tabs:toggleMute', id),
+  reorderTabs: (orderedIds) => ipcRenderer.invoke('tabs:reorder', orderedIds),
   go: (urlOrQuery) => ipcRenderer.invoke('nav:go', urlOrQuery),
   back: () => ipcRenderer.invoke('nav:back'),
   forward: () => ipcRenderer.invoke('nav:forward'),
