@@ -1,8 +1,10 @@
 const { app, BrowserWindow, BrowserView, ipcMain, Menu, shell, dialog } = require('electron');
 const path = require('path');
+const fs = require('fs');
 
 const HISTORY_PRELOAD = path.join(__dirname, 'history-preload.js');
 const DOWNLOADS_PRELOAD = path.join(__dirname, 'downloads-preload.js');
+const PRINT_PRELOAD = path.join(__dirname, 'print-preload.js');
 
 // Altura da barra de UI (abas + endereço) em pixels.
 // As páginas web (BrowserView) começam abaixo dessa altura.
@@ -11,6 +13,8 @@ const UI_HEIGHT = 84;
 let mainWindow;
 let historyWindow = null;   // janela independente de histórico (Ctrl+H)
 let downloadsWindow = null; // janela independente de downloads (Ctrl+D)
+let printWindow = null;     // janela independente de impressão (Ctrl+P)
+let printTab = null;        // aba alvo da janela de impressão aberta
 let tabs = [];      // cada item: { id, view, title, url }
 let activeTabId = null;
 let previousTabId = null; // última aba ativa antes da atual, para Ctrl+Tab
@@ -31,6 +35,33 @@ function sendDownloadsUpdate() {
   if (downloadsWindow && !downloadsWindow.isDestroyed()) {
     downloadsWindow.webContents.send('downloads:update', downloads);
   }
+}
+
+// Fallback do Ctrl+P quando o diálogo nativo de impressão falha (ex.: sem
+// destinos CUPS cadastrados, nem "Salvar como PDF"): janela própria de
+// impressão, parecida com a de outros navegadores (ex.: Falkon), mas com
+// uma única opção real de destino, já que não há impressora cadastrada.
+function openPrintDialog(tab) {
+  printTab = tab;
+  if (printWindow && !printWindow.isDestroyed()) {
+    printWindow.focus();
+    return;
+  }
+  printWindow = new BrowserWindow({
+    width: 420,
+    height: 320,
+    title: 'Imprimir',
+    resizable: false,
+    webPreferences: {
+      preload: PRINT_PRELOAD,
+      contextIsolation: true,
+      sandbox: true,
+    },
+  });
+  printWindow.setMenuBarVisibility(false);
+  printWindow.loadFile('print.html');
+  closeOnCtrlW(printWindow);
+  printWindow.on('closed', () => { printWindow = null; printTab = null; });
 }
 
 // Fecha a própria janela com Ctrl+W, igual ao comportamento de fechar aba
@@ -280,7 +311,20 @@ function handleShortcut(input) {
     }
     return true;
   }
-  if (ctrl && key === 'p') { if (tab) tab.view.webContents.print(); return true; }
+  if (ctrl && key === 'p') {
+    if (tab) {
+      // O diálogo nativo do SO depende do CUPS ter destinos cadastrados
+      // (nem "Salvar como PDF" aparece sem isso). Sem impressora
+      // configurada ele falha em vez de abrir, então caímos pra gerar o
+      // PDF direto e deixar a pessoa escolher onde salvar.
+      tab.view.webContents.print({}, (success, failureReason) => {
+        if (success) return;
+        console.error('Ctrl+P native print failed, falling back to PDF:', failureReason);
+        openPrintDialog(tab);
+      });
+    }
+    return true;
+  }
   if (ctrl && key === 'm') {
     if (tab) {
       tab.muted = !tab.muted;
@@ -364,6 +408,33 @@ ipcMain.handle('history:clear', () => {
 });
 ipcMain.handle('downloads:get', () => downloads);
 ipcMain.handle('downloads:showInFolder', (_e, filePath) => shell.showItemInFolder(filePath));
+
+ipcMain.handle('print:get-default-path', () => {
+  const safeName = (printTab?.title || 'pagina').replace(/[\\/:*?"<>|]/g, '_');
+  return path.join(app.getPath('downloads'), `${safeName}.pdf`);
+});
+ipcMain.handle('print:browse', async (_e, currentPath) => {
+  const { canceled, filePath } = await dialog.showSaveDialog(printWindow, {
+    defaultPath: currentPath,
+    filters: [{ name: 'PDF', extensions: ['pdf'] }],
+  });
+  return canceled ? null : filePath;
+});
+ipcMain.handle('print:submit', async (_e, outputPath) => {
+  const tab = printTab;
+  if (!tab || !outputPath) return;
+  try {
+    const data = await tab.view.webContents.printToPDF({});
+    fs.writeFileSync(outputPath, data);
+    downloads.unshift({ filename: path.basename(outputPath), path: outputPath, url: tab.url, state: 'completed', startedAt: Date.now() });
+    sendDownloadsUpdate();
+    printWindow?.close();
+    openDownloadsWindow();
+  } catch (err) {
+    console.error('Ctrl+P printToPDF failed:', err);
+  }
+});
+ipcMain.handle('print:cancel', () => printWindow?.close());
 
 ipcMain.handle('ui:set-overlay-height', (_e, px) => {
   overlayReserved = typeof px === 'number' && px > 0 ? px : 0;
