@@ -5,6 +5,49 @@ const newFolderRow = document.getElementById('new-folder-row');
 
 let items = [];
 
+// Mover um favorito arrastando pra uma pasta (issue #9) via mouse events em
+// vez do drag-and-drop HTML5 nativo — mesmo problema documentado em
+// renderer.js pra reordenar abas: no Linux/Wayland o DnD nativo do Chromium
+// trava a janela (dragend/drop não disparam de forma confiável).
+let dragBookmark = null; // { id, el, hoverRow, moved }
+let suppressNextClick = false;
+
+function onBookmarkDragMove(e) {
+  if (!dragBookmark) return;
+  if (!dragBookmark.moved) {
+    if (Math.abs(e.clientX - dragBookmark.startX) < 5 && Math.abs(e.clientY - dragBookmark.startY) < 5) return;
+    dragBookmark.moved = true;
+    dragBookmark.el.classList.add('dragging');
+  }
+  const target = document.elementFromPoint(e.clientX, e.clientY);
+  const folderRow = target ? target.closest('[data-drop-folder-id]') : null;
+  if (dragBookmark.hoverRow && dragBookmark.hoverRow !== folderRow) {
+    dragBookmark.hoverRow.classList.remove('drag-over');
+  }
+  if (folderRow) folderRow.classList.add('drag-over');
+  dragBookmark.hoverRow = folderRow;
+}
+
+function onBookmarkDragEnd(e) {
+  document.removeEventListener('mousemove', onBookmarkDragMove);
+  document.removeEventListener('mouseup', onBookmarkDragEnd);
+  if (dragBookmark?.moved) {
+    suppressNextClick = true;
+    dragBookmark.el.classList.remove('dragging');
+    if (dragBookmark.hoverRow) {
+      dragBookmark.hoverRow.classList.remove('drag-over');
+      const folderId = Number(dragBookmark.hoverRow.dataset.dropFolderId);
+      window.bookmarksAPI.move(dragBookmark.id, folderId).then(load);
+    } else {
+      // Soltar em área vazia da árvore (fora de qualquer pasta) volta o
+      // favorito pra raiz; soltar fora da árvore inteira cancela.
+      const target = document.elementFromPoint(e.clientX, e.clientY);
+      if (target?.closest('#tree')) window.bookmarksAPI.move(dragBookmark.id, null).then(load);
+    }
+  }
+  dragBookmark = null;
+}
+
 function folderOptions(excludeId) {
   const folders = items.filter((b) => b.type === 'folder' && b.id !== excludeId);
   const options = ['<option value="">Raiz</option>']
@@ -85,7 +128,7 @@ function countDescendants(folderId) {
 function renderBookmarkRow(entry) {
   const li = document.createElement('li');
   li.innerHTML = `
-    <div class="row bookmark-row" draggable="true">
+    <div class="row bookmark-row">
       <div class="row-main">
         <span class="bookmark-dot">●</span>
         <span class="entry-title" title="Renomear">${entry.title || entry.url}</span>
@@ -104,17 +147,21 @@ function renderBookmarkRow(entry) {
   // Arrastar um favorito pra cima de uma pasta move ele pra lá — o select
   // continua funcionando como alternativa (útil quando a pasta de destino
   // tem muitos itens e mirar nela com o mouse fica ruim).
-  row.addEventListener('dragstart', (e) => {
-    e.dataTransfer.setData('text/plain', String(entry.id));
-    e.dataTransfer.effectAllowed = 'move';
-    row.classList.add('dragging');
+  row.addEventListener('mousedown', (e) => {
+    if (e.button !== 0 || e.target.closest('select') || e.target.closest('button')) return;
+    dragBookmark = { id: entry.id, el: row, startX: e.clientX, startY: e.clientY, moved: false, hoverRow: null };
+    document.addEventListener('mousemove', onBookmarkDragMove);
+    document.addEventListener('mouseup', onBookmarkDragEnd);
   });
-  row.addEventListener('dragend', () => row.classList.remove('dragging'));
 
   li.querySelector('.entry-title').addEventListener('click', (e) => {
+    if (suppressNextClick) { suppressNextClick = false; return; }
     editInline(e.target, entry.title || entry.url, (title) => window.bookmarksAPI.rename(entry.id, title).then(load));
   });
-  li.querySelector('.entry-url').addEventListener('click', () => window.bookmarksAPI.openUrl(entry.url));
+  li.querySelector('.entry-url').addEventListener('click', () => {
+    if (suppressNextClick) { suppressNextClick = false; return; }
+    window.bookmarksAPI.openUrl(entry.url);
+  });
   li.querySelector('.speeddial-toggle').addEventListener('click', () => {
     window.bookmarksAPI.toggleSpeedDial(entry.id).then(load);
   });
@@ -145,22 +192,6 @@ function renderFolderNode(folder) {
   const moveSelect = li.querySelector('.move-select');
   moveSelect.innerHTML = folderOptions(folder.id);
   moveSelect.value = folder.parentId ?? '';
-
-  // Pasta é alvo de drop: destaca enquanto um favorito é arrastado por
-  // cima e move ao soltar. stopPropagation evita que o drop "vaze" pro
-  // container raiz (#tree), que trataria como "mover pra raiz".
-  row.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    row.classList.add('drag-over');
-  });
-  row.addEventListener('dragleave', () => row.classList.remove('drag-over'));
-  row.addEventListener('drop', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    row.classList.remove('drag-over');
-    const id = Number(e.dataTransfer.getData('text/plain'));
-    if (id) window.bookmarksAPI.move(id, folder.id).then(load);
-  });
 
   li.querySelector('.folder-title').addEventListener('click', (e) => {
     editInline(e.target, folder.title, (title) => window.bookmarksAPI.rename(folder.id, title).then(load));
@@ -199,16 +230,6 @@ async function load() {
 }
 
 newFolderBtn.addEventListener('click', () => showNewFolderForm(newFolderRow, null));
-
-// Soltar um favorito em qualquer área vazia da árvore (fora de uma pasta)
-// move ele pra raiz. Pastas fazem stopPropagation no próprio drop, então
-// isso só dispara quando o drop não caiu em cima de nenhuma.
-tree.addEventListener('dragover', (e) => e.preventDefault());
-tree.addEventListener('drop', (e) => {
-  e.preventDefault();
-  const id = Number(e.dataTransfer.getData('text/plain'));
-  if (id) window.bookmarksAPI.move(id, null).then(load);
-});
 
 window.bookmarksAPI.onUpdate(render);
 load();

@@ -21,6 +21,10 @@
     color: var(--ink);
     font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
     font-size: 13px;
+    /* Sem isso, arrastar uma linha pra uma pasta seleciona o texto dela
+       (comportamento padrão do navegador ao clicar-e-arrastar). Não afeta
+       o <input> de edição inline — inputs sempre permitem seleção própria. */
+    user-select: none;
   }
   h1 {
     font-size: 16px;
