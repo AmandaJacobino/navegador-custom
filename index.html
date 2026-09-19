@@ -118,6 +118,7 @@
   #toolbar button:hover { background: rgba(255,255,255,0.08); color: var(--text); }
   #toolbar button:disabled { opacity: 0.3; cursor: default; }
   #toolbar button:disabled:hover { background: none; }
+  #btn-bookmark.active { color: var(--accent); }
 
   #address {
     flex: 1;
@@ -180,6 +181,7 @@
     <button id="btn-forward" title="Avançar">→</button>
     <button id="btn-reload" title="Recarregar">⟳</button>
     <input id="address" type="text" placeholder="Buscar ou digitar um endereço" />
+    <button id="btn-bookmark" title="Favoritar aba">☆</button>
   </div>
 
   <div id="findbar" class="hidden">

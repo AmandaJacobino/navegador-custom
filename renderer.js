@@ -4,6 +4,7 @@ const address = document.getElementById('address');
 const btnBack = document.getElementById('btn-back');
 const btnForward = document.getElementById('btn-forward');
 const btnReload = document.getElementById('btn-reload');
+const btnBookmark = document.getElementById('btn-bookmark');
 
 let currentState = { tabs: [], activeTabId: null, canGoBack: false, canGoForward: false };
 
@@ -98,6 +99,10 @@ function render() {
 
   btnBack.disabled = !currentState.canGoBack;
   btnForward.disabled = !currentState.canGoForward;
+
+  const bookmarked = !!active?.bookmarked;
+  btnBookmark.textContent = bookmarked ? '★' : '☆';
+  btnBookmark.classList.toggle('active', bookmarked);
 }
 
 window.browserAPI.onTabsUpdate((state) => {
@@ -109,6 +114,7 @@ newTabBtn.addEventListener('click', () => window.browserAPI.newTab());
 btnBack.addEventListener('click', () => window.browserAPI.back());
 btnForward.addEventListener('click', () => window.browserAPI.forward());
 btnReload.addEventListener('click', () => window.browserAPI.reload());
+btnBookmark.addEventListener('click', () => window.browserAPI.toggleBookmark());
 
 address.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {

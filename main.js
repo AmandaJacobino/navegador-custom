@@ -5,6 +5,8 @@ const fs = require('fs');
 const HISTORY_PRELOAD = path.join(__dirname, 'history-preload.js');
 const DOWNLOADS_PRELOAD = path.join(__dirname, 'downloads-preload.js');
 const PRINT_PRELOAD = path.join(__dirname, 'print-preload.js');
+const BOOKMARKS_PRELOAD = path.join(__dirname, 'bookmarks-preload.js');
+const BOOKMARKS_FILE = path.join(app.getPath('userData'), 'bookmarks.json');
 
 // Altura da barra de UI (abas + endereço) em pixels.
 // As páginas web (BrowserView) começam abaixo dessa altura.
@@ -13,6 +15,7 @@ const UI_HEIGHT = 84;
 let mainWindow;
 let historyWindow = null;   // janela independente de histórico (Ctrl+H)
 let downloadsWindow = null; // janela independente de downloads (Ctrl+D)
+let bookmarksWindow = null; // janela independente de favoritos (Ctrl+B)
 let printWindow = null;     // janela independente de impressão (Ctrl+P)
 let printTab = null;        // aba alvo da janela de impressão aberta
 let tabs = [];      // cada item: { id, view, title, url }
@@ -22,6 +25,8 @@ let nextTabId = 1;
 let history = [];   // { id, url, title, timestamp }
 let nextHistoryId = 1;
 let downloads = []; // { filename, path, url, state, startedAt }
+let bookmarks = []; // { id, url, title, createdAt }, persistido em BOOKMARKS_FILE
+let nextBookmarkId = 1;
 // Espaço extra reservado no topo quando um painel (busca/downloads) está
 // aberto. O BrowserView fica acima do DOM da janela, então "abrir" um
 // painel HTML não basta: é preciso empurrar o BrowserView pra baixo.
@@ -120,6 +125,68 @@ function openDownloadsWindow() {
   downloadsWindow.on('closed', () => { downloadsWindow = null; });
 }
 
+// Janela independente de favoritos (issue #9, Ctrl+B), no mesmo estilo das
+// janelas de histórico e downloads.
+function openBookmarksWindow() {
+  if (bookmarksWindow && !bookmarksWindow.isDestroyed()) {
+    bookmarksWindow.focus();
+    return;
+  }
+  bookmarksWindow = new BrowserWindow({
+    width: 480,
+    height: 600,
+    title: 'Favoritos',
+    webPreferences: {
+      preload: BOOKMARKS_PRELOAD,
+      contextIsolation: true,
+      sandbox: true,
+    },
+  });
+  bookmarksWindow.setMenuBarVisibility(false);
+  bookmarksWindow.loadFile('bookmarks.html');
+  closeOnCtrlW(bookmarksWindow);
+  bookmarksWindow.on('closed', () => { bookmarksWindow = null; });
+}
+
+function loadBookmarks() {
+  try {
+    const raw = fs.readFileSync(BOOKMARKS_FILE, 'utf-8');
+    bookmarks = JSON.parse(raw);
+    nextBookmarkId = bookmarks.reduce((max, b) => Math.max(max, b.id), 0) + 1;
+  } catch {
+    bookmarks = [];
+  }
+}
+
+function saveBookmarks() {
+  fs.writeFileSync(BOOKMARKS_FILE, JSON.stringify(bookmarks, null, 2));
+}
+
+function sendBookmarksUpdate() {
+  if (bookmarksWindow && !bookmarksWindow.isDestroyed()) {
+    bookmarksWindow.webContents.send('bookmarks:update', bookmarks);
+  }
+}
+
+function isBookmarked(url) {
+  return bookmarks.some((b) => b.url === url);
+}
+
+// Alterna o favorito da aba informada: remove se a URL já está salva,
+// adiciona (com o título atual da aba) caso contrário.
+function toggleBookmark(tab) {
+  if (!tab) return;
+  const existing = bookmarks.find((b) => b.url === tab.url);
+  if (existing) {
+    bookmarks = bookmarks.filter((b) => b.id !== existing.id);
+  } else {
+    bookmarks.push({ id: nextBookmarkId++, url: tab.url, title: tab.title, createdAt: Date.now() });
+  }
+  saveBookmarks();
+  sendBookmarksUpdate();
+  sendTabsUpdate();
+}
+
 function layoutActiveView() {
   const tab = getActiveTab();
   if (!tab) return;
@@ -149,6 +216,7 @@ function sendTabsUpdate() {
       url: t.url,
       muted: t.muted,
       audible: t.view.webContents.isCurrentlyAudible(),
+      bookmarked: isBookmarked(t.url),
     })),
     activeTabId,
     canGoBack: tab ? tab.view.webContents.canGoBack() : false,
@@ -290,6 +358,7 @@ function handleShortcut(input) {
   if ((ctrl && key === 'r') || key === 'f5') { if (tab) tab.view.webContents.reload(); return true; }
   if (ctrl && key === 'h') { openHistoryWindow(); return true; }
   if (ctrl && key === 'd') { openDownloadsWindow(); return true; }
+  if (ctrl && key === 'b') { openBookmarksWindow(); return true; }
   if (ctrl && key === 'f') { mainWindow.webContents.send('ui:toggle-findbar'); return true; }
   if (ctrl && key === 's') {
     if (tab) {
@@ -419,6 +488,15 @@ ipcMain.handle('history:clear', () => {
 ipcMain.handle('downloads:get', () => downloads);
 ipcMain.handle('downloads:showInFolder', (_e, filePath) => shell.showItemInFolder(filePath));
 
+ipcMain.handle('bookmarks:get', () => bookmarks);
+ipcMain.handle('bookmarks:toggleActive', () => toggleBookmark(getActiveTab()));
+ipcMain.handle('bookmarks:remove', (_e, id) => {
+  bookmarks = bookmarks.filter((b) => b.id !== id);
+  saveBookmarks();
+  sendBookmarksUpdate();
+  sendTabsUpdate();
+});
+
 ipcMain.handle('print:get-default-path', () => {
   const safeName = (printTab?.title || 'pagina').replace(/[\\/:*?"<>|]/g, '_');
   return path.join(app.getPath('downloads'), `${safeName}.pdf`);
@@ -474,6 +552,7 @@ app.whenReady().then(() => {
   // Sem isso, o menu padrão do Electron reserva Ctrl+R para recarregar a
   // janela principal (index.html) e colidiria com o Ctrl+R de recarregar a aba.
   Menu.setApplicationMenu(null);
+  loadBookmarks();
   createMainWindow();
 });
 
