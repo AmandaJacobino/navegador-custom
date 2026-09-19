@@ -165,9 +165,37 @@ function loadBookmarks() {
       ...b,
     }));
     nextBookmarkId = bookmarks.reduce((max, b) => Math.max(max, b.id), 0) + 1;
+    healBrokenParentChains();
   } catch {
     bookmarks = [];
   }
+}
+
+// Uma pasta cujo caminho de parentId nunca chega em null (raiz) está num
+// ciclo — duas pastas apontando uma pra outra como pai, por exemplo — e
+// fica invisível na árvore junto com tudo que estiver dentro dela. Isso
+// não deveria acontecer (moveItem recusa criar ciclos novos), mas se um
+// arquivo antigo já veio corrompido, resolve movendo essas pastas de
+// volta pra raiz em vez de deixá-las (e seu conteúdo) somem sem explicação.
+function healBrokenParentChains() {
+  const byId = new Map(bookmarks.map((b) => [b.id, b]));
+  let healed = false;
+  for (const item of bookmarks) {
+    if (item.type !== 'folder') continue;
+    const seen = new Set();
+    let current = item;
+    while (current.parentId != null) {
+      if (seen.has(current.id)) {
+        item.parentId = null;
+        healed = true;
+        break;
+      }
+      seen.add(current.id);
+      current = byId.get(current.parentId);
+      if (!current) { item.parentId = null; healed = true; break; }
+    }
+  }
+  if (healed) saveBookmarks();
 }
 
 function saveBookmarks() {
@@ -244,9 +272,23 @@ function renameItem(id, title) {
   persistAndBroadcast();
 }
 
+// Move uma pasta pra dentro de si mesma ou de uma descendente dela criaria
+// um ciclo, que a árvore não consegue mais alcançar a partir da raiz (fica
+// invisível na UI, junto com tudo que tiver dentro). Favoritos não têm
+// filhos, então nunca podem causar ciclo.
+function wouldCreateCycle(id, parentId) {
+  let current = parentId;
+  while (current != null) {
+    if (current === id) return true;
+    current = bookmarks.find((b) => b.id === current)?.parentId ?? null;
+  }
+  return false;
+}
+
 function moveItem(id, parentId) {
   const item = bookmarks.find((b) => b.id === id);
   if (!item) return;
+  if (item.type === 'folder' && wouldCreateCycle(id, parentId)) return;
   item.parentId = parentId;
   persistAndBroadcast();
 }

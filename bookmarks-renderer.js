@@ -54,6 +54,25 @@ function folderLabel(parentId) {
   return folder ? folder.title : 'Raiz';
 }
 
+// Uma pasta não pode ir pra dentro de si mesma nem de uma subpasta dela —
+// criaria um ciclo que a torna inalcançável a partir da raiz (e some com
+// tudo que tiver dentro). Calcula o próprio id + todos os descendentes pra
+// excluir do dropdown, em vez de deixar a pessoa escolher e falhar depois.
+function folderAndDescendantIds(folderId) {
+  const ids = new Set([folderId]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const b of items) {
+      if (b.type === 'folder' && ids.has(b.parentId) && !ids.has(b.id)) {
+        ids.add(b.id);
+        grew = true;
+      }
+    }
+  }
+  return ids;
+}
+
 // Posiciona o painel do dropdown como position:fixed calculado à mão, em
 // vez de CSS anchor positioning (position-area) — o Chromium do Electron
 // 31 está bem na borda do suporte a essa feature, então preferimos o modo
@@ -73,7 +92,7 @@ function positionFolderPanel(trigger, panel) {
 // pasta, usando a Popover API (suportada desde o Chrome 116, então
 // funciona no Chromium do Electron 31) em vez de um <select> nativo, que
 // não combinava com o resto do visual.
-function renderFolderPicker(item, excludeId) {
+function renderFolderPicker(item, excludeIds = new Set()) {
   const wrapper = document.createElement('div');
   wrapper.className = 'folder-picker';
   const panelId = `fp-${item.id}`;
@@ -87,7 +106,7 @@ function renderFolderPicker(item, excludeId) {
   const trigger = wrapper.querySelector('.folder-picker-trigger');
   const panel = wrapper.querySelector('.folder-picker-panel');
 
-  const folders = items.filter((b) => b.type === 'folder' && b.id !== excludeId);
+  const folders = items.filter((b) => b.type === 'folder' && !excludeIds.has(b.id));
   const options = [{ id: '', title: 'Raiz' }, ...folders];
   panel.innerHTML = options
     .map((f) => `<button type="button" class="folder-option" data-value="${f.id}">${f.title}</button>`)
@@ -191,7 +210,7 @@ function renderBookmarkRow(entry) {
     </div>
   `;
   const row = li.querySelector('.row');
-  li.querySelector('.move-slot').replaceWith(renderFolderPicker(entry, null));
+  li.querySelector('.move-slot').replaceWith(renderFolderPicker(entry));
 
   // Arrastar um favorito pra cima de uma pasta move ele pra lá — o select
   // continua funcionando como alternativa (útil quando a pasta de destino
@@ -234,7 +253,7 @@ function renderFolderNode(folder) {
     </div>
   `;
   const row = li.querySelector('.row');
-  li.querySelector('.move-slot').replaceWith(renderFolderPicker(folder, folder.id));
+  li.querySelector('.move-slot').replaceWith(renderFolderPicker(folder, folderAndDescendantIds(folder.id)));
 
   li.querySelector('.folder-title').addEventListener('click', (e) => {
     editInline(e.target, folder.title, (title) => window.bookmarksAPI.rename(folder.id, title).then(load));
