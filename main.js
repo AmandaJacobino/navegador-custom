@@ -148,10 +148,22 @@ function openBookmarksWindow() {
   bookmarksWindow.on('closed', () => { bookmarksWindow = null; });
 }
 
+// bookmarks é uma lista plana de itens em árvore: cada um é um favorito
+// { id, type: 'bookmark', title, url, speedDial, parentId, createdAt } ou
+// uma pasta { id, type: 'folder', title, parentId, createdAt }.
+// parentId null = nível raiz. A UI (bookmarks-renderer.js) monta a árvore
+// a partir dessa lista plana.
 function loadBookmarks() {
   try {
     const raw = fs.readFileSync(BOOKMARKS_FILE, 'utf-8');
-    bookmarks = JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    // Migra o formato antigo (favorito plano sem type/parentId/speedDial).
+    bookmarks = parsed.map((b) => ({
+      type: 'bookmark',
+      parentId: null,
+      speedDial: false,
+      ...b,
+    }));
     nextBookmarkId = bookmarks.reduce((max, b) => Math.max(max, b.id), 0) + 1;
   } catch {
     bookmarks = [];
@@ -168,23 +180,126 @@ function sendBookmarksUpdate() {
   }
 }
 
-function isBookmarked(url) {
-  return bookmarks.some((b) => b.url === url);
+function findBookmarkByUrl(url) {
+  return bookmarks.find((b) => b.type === 'bookmark' && b.url === url);
 }
 
-// Alterna o favorito da aba informada: remove se a URL já está salva,
-// adiciona (com o título atual da aba) caso contrário.
-function toggleBookmark(tab) {
-  if (!tab) return;
-  const existing = bookmarks.find((b) => b.url === tab.url);
-  if (existing) {
-    bookmarks = bookmarks.filter((b) => b.id !== existing.id);
-  } else {
-    bookmarks.push({ id: nextBookmarkId++, url: tab.url, title: tab.title, createdAt: Date.now() });
-  }
+function isBookmarked(url) {
+  return !!findBookmarkByUrl(url);
+}
+
+function isSpeedDial(url) {
+  return !!findBookmarkByUrl(url)?.speedDial;
+}
+
+function persistAndBroadcast() {
   saveBookmarks();
   sendBookmarksUpdate();
   sendTabsUpdate();
+}
+
+function addBookmark(tab, parentId = null) {
+  if (!tab || findBookmarkByUrl(tab.url)) return;
+  bookmarks.push({
+    id: nextBookmarkId++,
+    type: 'bookmark',
+    url: tab.url,
+    title: tab.title,
+    speedDial: false,
+    parentId,
+    createdAt: Date.now(),
+  });
+  persistAndBroadcast();
+}
+
+function removeBookmarkByUrl(url) {
+  const existing = findBookmarkByUrl(url);
+  if (!existing) return;
+  removeItem(existing.id);
+}
+
+// Remove um item (favorito ou pasta). Ao remover uma pasta, remove também
+// toda a subárvore — evita deixar filhos "órfãos" apontando pra um
+// parentId inexistente.
+function removeItem(id) {
+  const toRemove = new Set([id]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const b of bookmarks) {
+      if (b.parentId != null && toRemove.has(b.parentId) && !toRemove.has(b.id)) {
+        toRemove.add(b.id);
+        grew = true;
+      }
+    }
+  }
+  bookmarks = bookmarks.filter((b) => !toRemove.has(b.id));
+  persistAndBroadcast();
+}
+
+function renameItem(id, title) {
+  const item = bookmarks.find((b) => b.id === id);
+  if (!item || !title?.trim()) return;
+  item.title = title.trim();
+  persistAndBroadcast();
+}
+
+function moveItem(id, parentId) {
+  const item = bookmarks.find((b) => b.id === id);
+  if (!item) return;
+  item.parentId = parentId;
+  persistAndBroadcast();
+}
+
+function addFolder(title, parentId = null) {
+  if (!title?.trim()) return;
+  bookmarks.push({
+    id: nextBookmarkId++,
+    type: 'folder',
+    title: title.trim(),
+    parentId,
+    createdAt: Date.now(),
+  });
+  persistAndBroadcast();
+}
+
+// Alterna a marcação de tela inicial (speed dial) da aba informada,
+// favoritando-a primeiro se ainda não estiver salva.
+function toggleSpeedDial(tab) {
+  if (!tab) return;
+  let entry = findBookmarkByUrl(tab.url);
+  if (!entry) {
+    entry = { id: nextBookmarkId++, type: 'bookmark', url: tab.url, title: tab.title, speedDial: false, parentId: null, createdAt: Date.now() };
+    bookmarks.push(entry);
+  }
+  entry.speedDial = !entry.speedDial;
+  persistAndBroadcast();
+}
+
+function toggleSpeedDialById(id) {
+  const item = bookmarks.find((b) => b.id === id && b.type === 'bookmark');
+  if (!item) return;
+  item.speedDial = !item.speedDial;
+  persistAndBroadcast();
+}
+
+// Menu de contexto exibido ao clicar na estrela da toolbar (issue #9).
+// pos vem do renderer (posição do botão) pra abrir abaixo dele, em vez de
+// no cursor — senão o menu cobre o próprio botão que o abriu.
+function showBookmarkMenu(pos) {
+  const tab = getActiveTab();
+  if (!tab || !mainWindow) return;
+  const bookmarked = isBookmarked(tab.url);
+  const speedDial = isSpeedDial(tab.url);
+  const template = [
+    { label: 'Adicionar aos favoritos', enabled: !bookmarked, click: () => addBookmark(tab) },
+    { label: 'Remover dos favoritos', enabled: bookmarked, click: () => removeBookmarkByUrl(tab.url) },
+    { type: 'separator' },
+    { label: 'Adicionar à tela inicial (Speed Dial)', type: 'checkbox', checked: speedDial, click: () => toggleSpeedDial(tab) },
+    { type: 'separator' },
+    { label: 'Gerenciar favoritos...', click: () => openBookmarksWindow() },
+  ];
+  Menu.buildFromTemplate(template).popup({ window: mainWindow, x: pos?.x, y: pos?.y });
 }
 
 function layoutActiveView() {
@@ -488,14 +603,13 @@ ipcMain.handle('history:clear', () => {
 ipcMain.handle('downloads:get', () => downloads);
 ipcMain.handle('downloads:showInFolder', (_e, filePath) => shell.showItemInFolder(filePath));
 
+ipcMain.on('bookmarks:showMenu', (_e, pos) => showBookmarkMenu(pos));
 ipcMain.handle('bookmarks:get', () => bookmarks);
-ipcMain.handle('bookmarks:toggleActive', () => toggleBookmark(getActiveTab()));
-ipcMain.handle('bookmarks:remove', (_e, id) => {
-  bookmarks = bookmarks.filter((b) => b.id !== id);
-  saveBookmarks();
-  sendBookmarksUpdate();
-  sendTabsUpdate();
-});
+ipcMain.handle('bookmarks:remove', (_e, id) => removeItem(id));
+ipcMain.handle('bookmarks:rename', (_e, id, title) => renameItem(id, title));
+ipcMain.handle('bookmarks:move', (_e, id, parentId) => moveItem(id, parentId));
+ipcMain.handle('bookmarks:addFolder', (_e, title, parentId) => addFolder(title, parentId));
+ipcMain.handle('bookmarks:toggleSpeedDial', (_e, id) => toggleSpeedDialById(id));
 
 ipcMain.handle('print:get-default-path', () => {
   const safeName = (printTab?.title || 'pagina').replace(/[\\/:*?"<>|]/g, '_');

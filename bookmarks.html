@@ -5,72 +5,250 @@
 <title>Favoritos</title>
 <style>
   :root {
-    --bg: #1e1f22;
-    --bg-elevated: #2b2d31;
-    --text: #e3e3e3;
-    --text-muted: #9a9a9a;
-    --accent: #4c8bf5;
-    --border: #3a3c40;
+    --bg: #131316;
+    --surface: #1c1c1f;
+    --surface-hover: #232327;
+    --ink: #e8e8ea;
+    --muted: #8b8b93;
+    --accent: #7c5cff;
+    --accent-soft: rgba(124, 92, 255, 0.16);
+    --border: #29292e;
   }
   * { box-sizing: border-box; }
   body {
     margin: 0;
     background: var(--bg);
-    color: var(--text);
+    color: var(--ink);
     font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 13px;
   }
   h1 {
-    font-size: 18px;
-    padding: 16px 20px 0 20px;
-    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    margin: 18px 20px 12px 20px;
   }
-  #list {
-    list-style: none;
-    margin: 0;
-    padding: 12px 20px 0 20px;
+  h2 {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted);
+    margin: 22px 20px 10px 20px;
   }
-  #list li {
-    padding: 10px 8px;
-    border-bottom: 1px solid var(--border);
+
+  /* Tela inicial: grid de atalhos, como a nova aba de um navegador real. */
+  #speeddial {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 0 20px;
+  }
+  #speeddial .tile {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    width: 76px;
     cursor: pointer;
+  }
+  #speeddial .tile .icon {
+    width: 52px;
+    height: 52px;
+    border-radius: 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 12px;
+    justify-content: center;
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--accent);
   }
-  #list li:hover { background: rgba(255,255,255,0.05); }
-  #list .entry-title {
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  #list .entry-url {
-    color: var(--text-muted);
-    font-size: 12px;
-    flex-shrink: 0;
-    max-width: 160px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  #list .entry-delete {
-    color: var(--text-muted);
-    flex-shrink: 0;
-    padding: 0 4px;
-  }
-  #list .entry-delete:hover { color: var(--text); }
-  #empty {
-    padding: 40px 20px;
-    color: var(--text-muted);
+  #speeddial .tile:hover .icon { border-color: var(--accent); background: var(--accent-soft); }
+  #speeddial .tile .label {
+    font-size: 11px;
+    color: var(--muted);
     text-align: center;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  #speeddial .tile:hover .label { color: var(--ink); }
+  #speeddial-empty {
+    padding: 0 20px 8px 20px;
+    color: var(--muted);
+  }
+
+  #new-folder-row {
+    padding: 0 20px 8px 20px;
+  }
+  #new-folder-btn {
+    background: none;
+    border: 1px dashed var(--border);
+    border-radius: 6px;
+    color: var(--muted);
+    padding: 6px 12px;
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  #new-folder-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  .new-folder-form {
+    padding: 6px 20px;
+    display: flex;
+    gap: 8px;
+  }
+  .inline-edit,
+  .new-folder-form input {
+    background: var(--surface);
+    color: var(--ink);
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    padding: 5px 8px;
+    font-size: 12px;
+    font-family: inherit;
+    flex: 1;
+  }
+  .new-folder-form .confirm-btn {
+    background: var(--accent);
+    color: var(--bg);
+    border: none;
+    border-radius: 6px;
+    padding: 5px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+  }
+
+  /* Árvore: linhas planas com hover, como o gerenciador de favoritos do
+     Chrome — sem cards com sombra, indentação vira uma guia sutil. */
+  #tree {
+    list-style: none;
+    margin: 0;
+    padding: 0 12px 20px 12px;
+  }
+  #tree ul {
+    list-style: none;
+    margin: 2px 0 2px 0;
+    padding-left: 20px;
+    border-left: 1px solid var(--border);
+  }
+  #tree li { border-radius: 6px; }
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 6px;
+  }
+  .row:hover { background: var(--surface-hover); }
+  .row.drag-over { background: var(--accent-soft); outline: 1px dashed var(--accent); }
+  .bookmark-row.dragging { opacity: 0.4; }
+
+  .folder-icon, .bookmark-dot {
+    flex-shrink: 0;
+    color: var(--muted);
+  }
+  .folder-title {
+    flex: 1;
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .folder-count {
+    color: var(--muted);
+    font-size: 11px;
+    flex-shrink: 0;
+  }
+
+  .bookmark-row { flex-direction: column; align-items: stretch; gap: 2px; cursor: grab; }
+  .bookmark-row .row-main { display: flex; align-items: center; gap: 8px; }
+  .entry-title {
+    flex: 1;
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .entry-url {
+    color: var(--muted);
+    font-size: 11px;
+    padding-left: 20px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+
+  /* Select "mover pra pasta": estilo próprio em vez do dropdown padrão do
+     SO. appearance: base-select (Chrome 135+) não existe no Chromium do
+     Electron 31, então usamos appearance: none + seta própria, que
+     funciona em qualquer versão. */
+  .move-select {
+    appearance: none;
+    -webkit-appearance: none;
+    background: transparent
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%238b8b93' stroke-width='1.5' fill='none'/%3E%3C/svg%3E")
+      no-repeat right 6px center;
+    color: var(--muted);
+    border: none;
+    border-radius: 4px;
+    font-size: 11px;
+    font-family: inherit;
+    padding: 3px 18px 3px 6px;
+    max-width: 100px;
+    cursor: pointer;
+    opacity: 0;
+  }
+  .row:hover .move-select,
+  .move-select:focus-visible { opacity: 1; }
+  .move-select:hover { background-color: var(--surface); color: var(--ink); }
+
+  .row button {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1;
+    padding: 2px 4px;
+    border-radius: 4px;
+    flex-shrink: 0;
+    opacity: 0;
+    font-family: inherit;
+  }
+  .row:hover button,
+  .row button:focus-visible { opacity: 1; }
+  .row button:hover, .row button:focus-visible { background: var(--surface); color: var(--ink); }
+  .row button.active { opacity: 1; color: var(--accent); }
+
+  :where(button, .entry-title, .folder-title, .entry-url, select):focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+
+  #empty {
+    padding: 20px;
+    color: var(--muted);
   }
 </style>
 </head>
 <body>
   <h1>Favoritos</h1>
-  <ul id="list"></ul>
+
+  <h2>Tela inicial</h2>
+  <div id="speeddial"></div>
+  <div id="speeddial-empty" hidden>Nenhum item na tela inicial ainda.</div>
+
+  <h2>Pastas e favoritos</h2>
+  <div id="new-folder-row">
+    <button id="new-folder-btn">+ Nova pasta</button>
+  </div>
+  <ul id="tree"></ul>
   <div id="empty" hidden>Nenhum favorito salvo ainda.</div>
+
   <script src="bookmarks-renderer.js"></script>
 </body>
 </html>

@@ -114,7 +114,10 @@ newTabBtn.addEventListener('click', () => window.browserAPI.newTab());
 btnBack.addEventListener('click', () => window.browserAPI.back());
 btnForward.addEventListener('click', () => window.browserAPI.forward());
 btnReload.addEventListener('click', () => window.browserAPI.reload());
-btnBookmark.addEventListener('click', () => window.browserAPI.toggleBookmark());
+btnBookmark.addEventListener('click', () => {
+  const rect = btnBookmark.getBoundingClientRect();
+  window.browserAPI.showBookmarkMenu({ x: Math.round(rect.left), y: Math.round(rect.bottom) });
+});
 
 address.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
