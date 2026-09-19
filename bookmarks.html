@@ -34,50 +34,6 @@
     margin: 22px 20px 10px 20px;
   }
 
-  /* Tela inicial: grid de atalhos, como a nova aba de um navegador real. */
-  #speeddial {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-    padding: 0 20px;
-  }
-  #speeddial .tile {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 6px;
-    width: 76px;
-    cursor: pointer;
-  }
-  #speeddial .tile .icon {
-    width: 52px;
-    height: 52px;
-    border-radius: 12px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 18px;
-    font-weight: 600;
-    color: var(--accent);
-  }
-  #speeddial .tile:hover .icon { border-color: var(--accent); background: var(--accent-soft); }
-  #speeddial .tile .label {
-    font-size: 11px;
-    color: var(--muted);
-    text-align: center;
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  #speeddial .tile:hover .label { color: var(--ink); }
-  #speeddial-empty {
-    padding: 0 20px 8px 20px;
-    color: var(--muted);
-  }
-
   #new-folder-row {
     padding: 0 20px 8px 20px;
   }
@@ -244,10 +200,6 @@
 </head>
 <body>
   <h1>Favoritos</h1>
-
-  <h2>Tela inicial</h2>
-  <div id="speeddial"></div>
-  <div id="speeddial-empty" hidden>Nenhum item na tela inicial ainda.</div>
 
   <h2>Pastas e favoritos</h2>
   <div id="new-folder-row">

@@ -1,5 +1,3 @@
-const speeddial = document.getElementById('speeddial');
-const speeddialEmpty = document.getElementById('speeddial-empty');
 const tree = document.getElementById('tree');
 const empty = document.getElementById('empty');
 const newFolderBtn = document.getElementById('new-folder-btn');
@@ -12,10 +10,6 @@ function folderOptions(excludeId) {
   const options = ['<option value="">Raiz</option>']
     .concat(folders.map((f) => `<option value="${f.id}">${f.title}</option>`));
   return options.join('');
-}
-
-function faviconLetter(entry) {
-  return (entry.title || entry.url || '?').trim().charAt(0).toUpperCase();
 }
 
 // Substitui um elemento por um <input> inline pra edição (Electron não
@@ -194,17 +188,6 @@ function renderLevel(container, parentId) {
 
 function render(list) {
   items = list;
-
-  const speedDialItems = items.filter((b) => b.type === 'bookmark' && b.speedDial);
-  speeddialEmpty.hidden = speedDialItems.length > 0;
-  speeddial.innerHTML = '';
-  speedDialItems.forEach((entry) => {
-    const tile = document.createElement('div');
-    tile.className = 'tile';
-    tile.innerHTML = `<span class="icon">${faviconLetter(entry)}</span><span class="label">${entry.title || entry.url}</span>`;
-    tile.addEventListener('click', () => window.bookmarksAPI.openUrl(entry.url));
-    speeddial.appendChild(tile);
-  });
 
   empty.hidden = items.length > 0;
   tree.innerHTML = '';
