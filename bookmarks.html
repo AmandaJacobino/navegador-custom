@@ -110,6 +110,10 @@
     flex: 1;
   }
   .new-folder-form .confirm-btn {
+    /* Sobrescreve #tree .row button (que esconde botões até o hover da
+       linha) — este botão pode ser inserido dentro da árvore, ao criar
+       uma subpasta, mas precisa ficar sempre visível. */
+    opacity: 1 !important;
     background: var(--accent);
     color: var(--bg);
     border: none;
@@ -202,11 +206,14 @@
     cursor: pointer;
     opacity: 0;
   }
-  .row:hover .move-select,
+  #tree .row:hover .move-select,
   .move-select:focus-visible { opacity: 1; }
   .move-select:hover { background-color: var(--surface); color: var(--ink); }
 
-  .row button {
+  /* Botões de ação (★ ✕ +) só aparecem no hover da linha — mas isso vale
+     só pras linhas da árvore. O botão "Criar" do formulário de nova pasta
+     usa a mesma classe .row de layout e precisa ficar sempre visível. */
+  #tree .row button {
     background: none;
     border: none;
     color: var(--muted);
@@ -219,10 +226,10 @@
     opacity: 0;
     font-family: inherit;
   }
-  .row:hover button,
-  .row button:focus-visible { opacity: 1; }
-  .row button:hover, .row button:focus-visible { background: var(--surface); color: var(--ink); }
-  .row button.active { opacity: 1; color: var(--accent); }
+  #tree .row:hover button,
+  #tree .row button:focus-visible { opacity: 1; }
+  #tree .row button:hover, #tree .row button:focus-visible { background: var(--surface); color: var(--ink); }
+  #tree .row button.active { opacity: 1; color: var(--accent); }
 
   :where(button, .entry-title, .folder-title, .entry-url, select):focus-visible {
     outline: 2px solid var(--accent);

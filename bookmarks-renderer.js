@@ -57,13 +57,24 @@ function showNewFolderForm(afterEl, parentId) {
   afterEl.insertAdjacentElement('afterend', form);
 
   const input = form.querySelector('input');
+  const confirmBtn = form.querySelector('.confirm-btn');
   input.focus();
+  let submitted = false;
   const submit = () => {
+    if (submitted) return;
     const title = input.value.trim();
-    if (title) window.bookmarksAPI.addFolder(title, parentId).then(load);
-    else form.remove();
+    if (!title) { form.remove(); return; }
+    submitted = true;
+    confirmBtn.disabled = true;
+    // O formulário de pasta na raiz fica fora de #tree (fica ao lado do
+    // botão "+ Nova pasta"), então o load() abaixo — que só redesenha
+    // #tree e #speeddial — não o remove sozinho.
+    window.bookmarksAPI.addFolder(title, parentId).then(() => {
+      form.remove();
+      load();
+    });
   };
-  form.querySelector('.confirm-btn').addEventListener('click', submit);
+  confirmBtn.addEventListener('click', submit);
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') submit();
     if (e.key === 'Escape') form.remove();
