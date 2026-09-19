@@ -146,29 +146,81 @@
     cursor: pointer;
   }
 
-  /* Select "mover pra pasta": estilo próprio em vez do dropdown padrão do
-     SO. appearance: base-select (Chrome 135+) não existe no Chromium do
-     Electron 31, então usamos appearance: none + seta própria, que
-     funciona em qualquer versão. */
-  .move-select {
-    appearance: none;
-    -webkit-appearance: none;
-    background: transparent
-      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%238b8b93' stroke-width='1.5' fill='none'/%3E%3C/svg%3E")
-      no-repeat right 6px center;
-    color: var(--muted);
-    border: none;
-    border-radius: 4px;
-    font-size: 11px;
-    font-family: inherit;
-    padding: 3px 18px 3px 6px;
-    max-width: 100px;
-    cursor: pointer;
-    opacity: 0;
+  /* Dropdown "mover pra pasta": Popover API em vez de <select> nativo —
+     appearance: base-select (Chrome 135+) não existe no Chromium do
+     Electron 31, mas a Popover API básica já existe desde o Chrome 116,
+     então dá pra construir um dropdown com cara própria e animação. */
+  .folder-picker { display: contents; }
+  .folder-picker-trigger {
+    display: flex !important;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px !important;
   }
-  #tree .row:hover .move-select,
-  .move-select:focus-visible { opacity: 1; }
-  .move-select:hover { background-color: var(--surface); color: var(--ink); }
+  .folder-picker-trigger .current {
+    max-width: 80px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .folder-picker-trigger .chevron { font-size: 9px; opacity: 0.7; }
+  /* !important porque #tree .row button (mais abaixo) tem um ID na
+     especificidade e ganharia de qualquer seletor só-com-classe daqui. */
+  #tree .row:hover .folder-picker-trigger,
+  .folder-picker-trigger:focus-visible,
+  .folder-picker-trigger:has(+ [popover]:popover-open) { opacity: 1 !important; }
+
+  .folder-picker-panel {
+    position: fixed;
+    margin: 0;
+    padding: 4px;
+    min-width: 150px;
+    max-height: 240px;
+    overflow-y: auto;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+    transition: opacity 130ms ease, transform 130ms ease, display 130ms allow-discrete, overlay 130ms allow-discrete;
+  }
+  .folder-picker-panel:popover-open {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  @starting-style {
+    .folder-picker-panel:popover-open {
+      opacity: 0;
+      transform: translateY(-4px) scale(0.97);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .folder-picker-panel { transition: none; }
+  }
+  /* !important em tudo que #tree .row button também define: o painel do
+     popover continua sendo descendente do DOM de .row (só é promovido
+     visualmente pro top layer), então aquela regra — que tem um ID —
+     ganharia da especificidade daqui sem isso. */
+  .folder-picker-panel .folder-option {
+    display: block !important;
+    width: 100% !important;
+    text-align: left !important;
+    opacity: 1 !important;
+    background: none !important;
+    border: none !important;
+    color: var(--ink) !important;
+    font-size: 12px !important;
+    font-family: inherit !important;
+    padding: 6px 8px !important;
+    border-radius: 6px !important;
+    cursor: pointer !important;
+  }
+  .folder-picker-panel .folder-option:hover,
+  .folder-picker-panel .folder-option:focus-visible {
+    background: var(--accent-soft) !important;
+    color: var(--accent) !important;
+  }
 
   /* Botões de ação (★ ✕ +) só aparecem no hover da linha — mas isso vale
      só pras linhas da árvore. O botão "Criar" do formulário de nova pasta
@@ -191,7 +243,7 @@
   #tree .row button:hover, #tree .row button:focus-visible { background: var(--surface); color: var(--ink); }
   #tree .row button.active { opacity: 1; color: var(--accent); }
 
-  :where(button, .entry-title, .folder-title, .entry-url, select):focus-visible {
+  :where(button, .entry-title, .folder-title, .entry-url):focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 1px;
   }

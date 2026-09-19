@@ -48,11 +48,62 @@ function onBookmarkDragEnd(e) {
   dragBookmark = null;
 }
 
-function folderOptions(excludeId) {
+function folderLabel(parentId) {
+  if (parentId == null) return 'Raiz';
+  const folder = items.find((b) => b.id === parentId && b.type === 'folder');
+  return folder ? folder.title : 'Raiz';
+}
+
+// Posiciona o painel do dropdown como position:fixed calculado à mão, em
+// vez de CSS anchor positioning (position-area) — o Chromium do Electron
+// 31 está bem na borda do suporte a essa feature, então preferimos o modo
+// manual, que a própria spec do Popover cita como alternativa válida.
+function positionFolderPanel(trigger, panel) {
+  const rect = trigger.getBoundingClientRect();
+  const panelRect = panel.getBoundingClientRect();
+  const spaceBelow = window.innerHeight - rect.bottom;
+  const top = spaceBelow >= panelRect.height || spaceBelow >= rect.top
+    ? rect.bottom + 4
+    : rect.top - panelRect.height - 4;
+  panel.style.top = `${Math.max(4, top)}px`;
+  panel.style.left = `${Math.min(rect.left, window.innerWidth - panelRect.width - 8)}px`;
+}
+
+// Dropdown customizado pra mover um item (favorito ou pasta) pra outra
+// pasta, usando a Popover API (suportada desde o Chrome 116, então
+// funciona no Chromium do Electron 31) em vez de um <select> nativo, que
+// não combinava com o resto do visual.
+function renderFolderPicker(item, excludeId) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'folder-picker';
+  const panelId = `fp-${item.id}`;
+  wrapper.innerHTML = `
+    <button type="button" class="folder-picker-trigger" popovertarget="${panelId}" popovertargetaction="toggle" title="Mover para pasta">
+      <span class="current">${folderLabel(item.parentId)}</span>
+      <span class="chevron">▾</span>
+    </button>
+    <div id="${panelId}" class="folder-picker-panel" popover="auto"></div>
+  `;
+  const trigger = wrapper.querySelector('.folder-picker-trigger');
+  const panel = wrapper.querySelector('.folder-picker-panel');
+
   const folders = items.filter((b) => b.type === 'folder' && b.id !== excludeId);
-  const options = ['<option value="">Raiz</option>']
-    .concat(folders.map((f) => `<option value="${f.id}">${f.title}</option>`));
-  return options.join('');
+  const options = [{ id: '', title: 'Raiz' }, ...folders];
+  panel.innerHTML = options
+    .map((f) => `<button type="button" class="folder-option" data-value="${f.id}">${f.title}</button>`)
+    .join('');
+
+  panel.addEventListener('toggle', (e) => {
+    if (e.newState === 'open') positionFolderPanel(trigger, panel);
+  });
+  panel.querySelectorAll('.folder-option').forEach((opt) => {
+    opt.addEventListener('click', () => {
+      const value = opt.dataset.value;
+      panel.hidePopover();
+      window.bookmarksAPI.move(item.id, value ? Number(value) : null).then(load);
+    });
+  });
+  return wrapper;
 }
 
 // Substitui um elemento por um <input> inline pra edição (Electron não
@@ -133,16 +184,14 @@ function renderBookmarkRow(entry) {
         <span class="bookmark-dot">●</span>
         <span class="entry-title" title="Renomear">${entry.title || entry.url}</span>
         <button class="speeddial-toggle ${entry.speedDial ? 'active' : ''}" title="Tela inicial">★</button>
-        <select class="move-select" title="Mover para pasta"></select>
+        <span class="move-slot"></span>
         <button class="delete-btn" title="Remover">✕</button>
       </div>
       <span class="entry-url">${entry.url}</span>
     </div>
   `;
   const row = li.querySelector('.row');
-  const moveSelect = li.querySelector('.move-select');
-  moveSelect.innerHTML = folderOptions(null);
-  moveSelect.value = entry.parentId ?? '';
+  li.querySelector('.move-slot').replaceWith(renderFolderPicker(entry, null));
 
   // Arrastar um favorito pra cima de uma pasta move ele pra lá — o select
   // continua funcionando como alternativa (útil quando a pasta de destino
@@ -165,10 +214,6 @@ function renderBookmarkRow(entry) {
   li.querySelector('.speeddial-toggle').addEventListener('click', () => {
     window.bookmarksAPI.toggleSpeedDial(entry.id).then(load);
   });
-  moveSelect.addEventListener('change', () => {
-    const parentId = moveSelect.value ? Number(moveSelect.value) : null;
-    window.bookmarksAPI.move(entry.id, parentId).then(load);
-  });
   li.querySelector('.delete-btn').addEventListener('click', () => {
     window.bookmarksAPI.remove(entry.id).then(load);
   });
@@ -183,22 +228,16 @@ function renderFolderNode(folder) {
       <span class="folder-icon">▸</span>
       <span class="folder-title" title="Renomear">${folder.title}</span>
       <span class="folder-count">${count}</span>
-      <select class="move-select" title="Mover para pasta"></select>
+      <span class="move-slot"></span>
       <button class="add-sub-btn" title="Nova subpasta">+</button>
       <button class="delete-btn" title="Remover pasta">✕</button>
     </div>
   `;
   const row = li.querySelector('.row');
-  const moveSelect = li.querySelector('.move-select');
-  moveSelect.innerHTML = folderOptions(folder.id);
-  moveSelect.value = folder.parentId ?? '';
+  li.querySelector('.move-slot').replaceWith(renderFolderPicker(folder, folder.id));
 
   li.querySelector('.folder-title').addEventListener('click', (e) => {
     editInline(e.target, folder.title, (title) => window.bookmarksAPI.rename(folder.id, title).then(load));
-  });
-  moveSelect.addEventListener('change', () => {
-    const parentId = moveSelect.value ? Number(moveSelect.value) : null;
-    window.bookmarksAPI.move(folder.id, parentId).then(load);
   });
   li.querySelector('.add-sub-btn').addEventListener('click', () => showNewFolderForm(row, folder.id));
   li.querySelector('.delete-btn').addEventListener('click', () => {
