@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Favoritos</title>
+<style>
+  :root {
+    --bg: #131316;
+    --surface: #1c1c1f;
+    --surface-hover: #232327;
+    --ink: #e8e8ea;
+    --muted: #8b8b93;
+    --accent: #7c5cff;
+    --accent-soft: rgba(124, 92, 255, 0.16);
+    --border: #29292e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 13px;
+    /* Sem isso, arrastar uma linha pra uma pasta seleciona o texto dela
+       (comportamento padrão do navegador ao clicar-e-arrastar). Não afeta
+       o <input> de edição inline — inputs sempre permitem seleção própria. */
+    user-select: none;
+  }
+  h1 {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 18px 20px 12px 20px;
+  }
+  h2 {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted);
+    margin: 22px 20px 10px 20px;
+  }
+
+  #new-folder-row {
+    padding: 0 20px 8px 20px;
+  }
+  #new-folder-btn {
+    background: none;
+    border: 1px dashed var(--border);
+    border-radius: 6px;
+    color: var(--muted);
+    padding: 6px 12px;
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  #new-folder-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  .new-folder-form {
+    padding: 6px 20px;
+    display: flex;
+    gap: 8px;
+  }
+  .inline-edit,
+  .new-folder-form input {
+    background: var(--surface);
+    color: var(--ink);
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    padding: 5px 8px;
+    font-size: 12px;
+    font-family: inherit;
+    flex: 1;
+  }
+  .new-folder-form .confirm-btn {
+    /* Sobrescreve #tree .row button (que esconde botões até o hover da
+       linha) — este botão pode ser inserido dentro da árvore, ao criar
+       uma subpasta, mas precisa ficar sempre visível. */
+    opacity: 1 !important;
+    background: var(--accent);
+    color: var(--bg);
+    border: none;
+    border-radius: 6px;
+    padding: 5px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+  }
+
+  /* Árvore: linhas planas com hover, como o gerenciador de favoritos do
+     Chrome — sem cards com sombra, indentação vira uma guia sutil. */
+  #tree {
+    list-style: none;
+    margin: 0;
+    padding: 0 12px 20px 12px;
+  }
+  #tree ul {
+    list-style: none;
+    margin: 2px 0 2px 0;
+    padding-left: 20px;
+    border-left: 1px solid var(--border);
+  }
+  #tree li { border-radius: 6px; }
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 6px;
+  }
+  .row:hover { background: var(--surface-hover); }
+  .row.drag-over { background: var(--accent-soft); outline: 1px dashed var(--accent); }
+  .bookmark-row.dragging { opacity: 0.4; }
+
+  .folder-icon, .bookmark-dot {
+    flex-shrink: 0;
+    color: var(--muted);
+  }
+  .folder-title {
+    flex: 1;
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .folder-count {
+    color: var(--muted);
+    font-size: 11px;
+    flex-shrink: 0;
+  }
+
+  .bookmark-row { flex-direction: column; align-items: stretch; gap: 2px; cursor: grab; }
+  .bookmark-row .row-main { display: flex; align-items: center; gap: 8px; }
+  .entry-title {
+    flex: 1;
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .entry-url {
+    color: var(--muted);
+    font-size: 11px;
+    padding-left: 20px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+
+  /* Dropdown "mover pra pasta": Popover API em vez de <select> nativo —
+     appearance: base-select (Chrome 135+) não existe no Chromium do
+     Electron 31, mas a Popover API básica já existe desde o Chrome 116,
+     então dá pra construir um dropdown com cara própria e animação. */
+  .folder-picker { display: contents; }
+  .folder-picker-trigger {
+    display: flex !important;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px !important;
+  }
+  .folder-picker-trigger .current {
+    max-width: 80px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .folder-picker-trigger .chevron { font-size: 9px; opacity: 0.7; }
+  /* !important porque #tree .row button (mais abaixo) tem um ID na
+     especificidade e ganharia de qualquer seletor só-com-classe daqui. */
+  #tree .row:hover .folder-picker-trigger,
+  .folder-picker-trigger:focus-visible,
+  .folder-picker-trigger:has(+ [popover]:popover-open) { opacity: 1 !important; }
+
+  .folder-picker-panel {
+    position: fixed;
+    margin: 0;
+    padding: 4px;
+    min-width: 150px;
+    max-height: 240px;
+    overflow-y: auto;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+    transition: opacity 130ms ease, transform 130ms ease, display 130ms allow-discrete, overlay 130ms allow-discrete;
+  }
+  .folder-picker-panel:popover-open {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  @starting-style {
+    .folder-picker-panel:popover-open {
+      opacity: 0;
+      transform: translateY(-4px) scale(0.97);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .folder-picker-panel { transition: none; }
+  }
+  /* !important em tudo que #tree .row button também define: o painel do
+     popover continua sendo descendente do DOM de .row (só é promovido
+     visualmente pro top layer), então aquela regra — que tem um ID —
+     ganharia da especificidade daqui sem isso. */
+  .folder-picker-panel .folder-option {
+    display: block !important;
+    width: 100% !important;
+    text-align: left !important;
+    opacity: 1 !important;
+    background: none !important;
+    border: none !important;
+    color: var(--ink) !important;
+    font-size: 12px !important;
+    font-family: inherit !important;
+    padding: 6px 8px !important;
+    border-radius: 6px !important;
+    cursor: pointer !important;
+  }
+  .folder-picker-panel .folder-option:hover,
+  .folder-picker-panel .folder-option:focus-visible {
+    background: var(--accent-soft) !important;
+    color: var(--accent) !important;
+  }
+
+  /* Botões de ação (★ ✕ +) só aparecem no hover da linha — mas isso vale
+     só pras linhas da árvore. O botão "Criar" do formulário de nova pasta
+     usa a mesma classe .row de layout e precisa ficar sempre visível. */
+  #tree .row button {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1;
+    padding: 2px 4px;
+    border-radius: 4px;
+    flex-shrink: 0;
+    opacity: 0;
+    font-family: inherit;
+  }
+  #tree .row:hover button,
+  #tree .row button:focus-visible { opacity: 1; }
+  #tree .row button:hover, #tree .row button:focus-visible { background: var(--surface); color: var(--ink); }
+  #tree .row button.active { opacity: 1; color: var(--accent); }
+
+  :where(button, .entry-title, .folder-title, .entry-url):focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+
+  #empty {
+    padding: 20px;
+    color: var(--muted);
+  }
+</style>
+</head>
+<body>
+  <h1>Favoritos</h1>
+
+  <h2>Pastas e favoritos</h2>
+  <div id="new-folder-row">
+    <button id="new-folder-btn">+ Nova pasta</button>
+  </div>
+  <ul id="tree"></ul>
+  <div id="empty" hidden>Nenhum favorito salvo ainda.</div>
+
+  <script src="bookmarks-renderer.js"></script>
+</body>
+</html>

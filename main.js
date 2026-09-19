@@ -5,6 +5,8 @@ const fs = require('fs');
 const HISTORY_PRELOAD = path.join(__dirname, 'history-preload.js');
 const DOWNLOADS_PRELOAD = path.join(__dirname, 'downloads-preload.js');
 const PRINT_PRELOAD = path.join(__dirname, 'print-preload.js');
+const BOOKMARKS_PRELOAD = path.join(__dirname, 'bookmarks-preload.js');
+const BOOKMARKS_FILE = path.join(app.getPath('userData'), 'bookmarks.json');
 
 // Altura da barra de UI (abas + endereço) em pixels.
 // As páginas web (BrowserView) começam abaixo dessa altura.
@@ -13,6 +15,7 @@ const UI_HEIGHT = 84;
 let mainWindow;
 let historyWindow = null;   // janela independente de histórico (Ctrl+H)
 let downloadsWindow = null; // janela independente de downloads (Ctrl+D)
+let bookmarksWindow = null; // janela independente de favoritos (Ctrl+B)
 let printWindow = null;     // janela independente de impressão (Ctrl+P)
 let printTab = null;        // aba alvo da janela de impressão aberta
 let tabs = [];      // cada item: { id, view, title, url }
@@ -22,6 +25,8 @@ let nextTabId = 1;
 let history = [];   // { id, url, title, timestamp }
 let nextHistoryId = 1;
 let downloads = []; // { filename, path, url, state, startedAt }
+let bookmarks = []; // { id, url, title, createdAt }, persistido em BOOKMARKS_FILE
+let nextBookmarkId = 1;
 // Espaço extra reservado no topo quando um painel (busca/downloads) está
 // aberto. O BrowserView fica acima do DOM da janela, então "abrir" um
 // painel HTML não basta: é preciso empurrar o BrowserView pra baixo.
@@ -120,6 +125,225 @@ function openDownloadsWindow() {
   downloadsWindow.on('closed', () => { downloadsWindow = null; });
 }
 
+// Janela independente de favoritos (issue #9, Ctrl+B), no mesmo estilo das
+// janelas de histórico e downloads.
+function openBookmarksWindow() {
+  if (bookmarksWindow && !bookmarksWindow.isDestroyed()) {
+    bookmarksWindow.focus();
+    return;
+  }
+  bookmarksWindow = new BrowserWindow({
+    width: 480,
+    height: 600,
+    title: 'Favoritos',
+    webPreferences: {
+      preload: BOOKMARKS_PRELOAD,
+      contextIsolation: true,
+      sandbox: true,
+    },
+  });
+  bookmarksWindow.setMenuBarVisibility(false);
+  bookmarksWindow.loadFile('bookmarks.html');
+  closeOnCtrlW(bookmarksWindow);
+  bookmarksWindow.on('closed', () => { bookmarksWindow = null; });
+}
+
+// bookmarks é uma lista plana de itens em árvore: cada um é um favorito
+// { id, type: 'bookmark', title, url, speedDial, parentId, createdAt } ou
+// uma pasta { id, type: 'folder', title, parentId, createdAt }.
+// parentId null = nível raiz. A UI (bookmarks-renderer.js) monta a árvore
+// a partir dessa lista plana.
+function loadBookmarks() {
+  try {
+    const raw = fs.readFileSync(BOOKMARKS_FILE, 'utf-8');
+    const parsed = JSON.parse(raw);
+    // Migra o formato antigo (favorito plano sem type/parentId/speedDial).
+    bookmarks = parsed.map((b) => ({
+      type: 'bookmark',
+      parentId: null,
+      speedDial: false,
+      ...b,
+    }));
+    nextBookmarkId = bookmarks.reduce((max, b) => Math.max(max, b.id), 0) + 1;
+    healBrokenParentChains();
+  } catch {
+    bookmarks = [];
+  }
+}
+
+// Uma pasta cujo caminho de parentId nunca chega em null (raiz) está num
+// ciclo — duas pastas apontando uma pra outra como pai, por exemplo — e
+// fica invisível na árvore junto com tudo que estiver dentro dela. Isso
+// não deveria acontecer (moveItem recusa criar ciclos novos), mas se um
+// arquivo antigo já veio corrompido, resolve movendo essas pastas de
+// volta pra raiz em vez de deixá-las (e seu conteúdo) somem sem explicação.
+function healBrokenParentChains() {
+  const byId = new Map(bookmarks.map((b) => [b.id, b]));
+  let healed = false;
+  for (const item of bookmarks) {
+    if (item.type !== 'folder') continue;
+    const seen = new Set();
+    let current = item;
+    while (current.parentId != null) {
+      if (seen.has(current.id)) {
+        item.parentId = null;
+        healed = true;
+        break;
+      }
+      seen.add(current.id);
+      current = byId.get(current.parentId);
+      if (!current) { item.parentId = null; healed = true; break; }
+    }
+  }
+  if (healed) saveBookmarks();
+}
+
+function saveBookmarks() {
+  fs.writeFileSync(BOOKMARKS_FILE, JSON.stringify(bookmarks, null, 2));
+}
+
+function sendBookmarksUpdate() {
+  if (bookmarksWindow && !bookmarksWindow.isDestroyed()) {
+    bookmarksWindow.webContents.send('bookmarks:update', bookmarks);
+  }
+}
+
+function findBookmarkByUrl(url) {
+  return bookmarks.find((b) => b.type === 'bookmark' && b.url === url);
+}
+
+function isBookmarked(url) {
+  return !!findBookmarkByUrl(url);
+}
+
+function isSpeedDial(url) {
+  return !!findBookmarkByUrl(url)?.speedDial;
+}
+
+function persistAndBroadcast() {
+  saveBookmarks();
+  sendBookmarksUpdate();
+  sendTabsUpdate();
+}
+
+function addBookmark(tab, parentId = null) {
+  if (!tab || findBookmarkByUrl(tab.url)) return;
+  bookmarks.push({
+    id: nextBookmarkId++,
+    type: 'bookmark',
+    url: tab.url,
+    title: tab.title,
+    speedDial: false,
+    parentId,
+    createdAt: Date.now(),
+  });
+  persistAndBroadcast();
+}
+
+function removeBookmarkByUrl(url) {
+  const existing = findBookmarkByUrl(url);
+  if (!existing) return;
+  removeItem(existing.id);
+}
+
+// Remove um item (favorito ou pasta). Ao remover uma pasta, remove também
+// toda a subárvore — evita deixar filhos "órfãos" apontando pra um
+// parentId inexistente.
+function removeItem(id) {
+  const toRemove = new Set([id]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const b of bookmarks) {
+      if (b.parentId != null && toRemove.has(b.parentId) && !toRemove.has(b.id)) {
+        toRemove.add(b.id);
+        grew = true;
+      }
+    }
+  }
+  bookmarks = bookmarks.filter((b) => !toRemove.has(b.id));
+  persistAndBroadcast();
+}
+
+function renameItem(id, title) {
+  const item = bookmarks.find((b) => b.id === id);
+  if (!item || !title?.trim()) return;
+  item.title = title.trim();
+  persistAndBroadcast();
+}
+
+// Move uma pasta pra dentro de si mesma ou de uma descendente dela criaria
+// um ciclo, que a árvore não consegue mais alcançar a partir da raiz (fica
+// invisível na UI, junto com tudo que tiver dentro). Favoritos não têm
+// filhos, então nunca podem causar ciclo.
+function wouldCreateCycle(id, parentId) {
+  let current = parentId;
+  while (current != null) {
+    if (current === id) return true;
+    current = bookmarks.find((b) => b.id === current)?.parentId ?? null;
+  }
+  return false;
+}
+
+function moveItem(id, parentId) {
+  const item = bookmarks.find((b) => b.id === id);
+  if (!item) return;
+  if (item.type === 'folder' && wouldCreateCycle(id, parentId)) return;
+  item.parentId = parentId;
+  persistAndBroadcast();
+}
+
+function addFolder(title, parentId = null) {
+  if (!title?.trim()) return;
+  bookmarks.push({
+    id: nextBookmarkId++,
+    type: 'folder',
+    title: title.trim(),
+    parentId,
+    createdAt: Date.now(),
+  });
+  persistAndBroadcast();
+}
+
+// Alterna a marcação de tela inicial (speed dial) da aba informada,
+// favoritando-a primeiro se ainda não estiver salva.
+function toggleSpeedDial(tab) {
+  if (!tab) return;
+  let entry = findBookmarkByUrl(tab.url);
+  if (!entry) {
+    entry = { id: nextBookmarkId++, type: 'bookmark', url: tab.url, title: tab.title, speedDial: false, parentId: null, createdAt: Date.now() };
+    bookmarks.push(entry);
+  }
+  entry.speedDial = !entry.speedDial;
+  persistAndBroadcast();
+}
+
+function toggleSpeedDialById(id) {
+  const item = bookmarks.find((b) => b.id === id && b.type === 'bookmark');
+  if (!item) return;
+  item.speedDial = !item.speedDial;
+  persistAndBroadcast();
+}
+
+// Menu de contexto exibido ao clicar na estrela da toolbar (issue #9).
+// pos vem do renderer (posição do botão) pra abrir abaixo dele, em vez de
+// no cursor — senão o menu cobre o próprio botão que o abriu.
+function showBookmarkMenu(pos) {
+  const tab = getActiveTab();
+  if (!tab || !mainWindow) return;
+  const bookmarked = isBookmarked(tab.url);
+  const speedDial = isSpeedDial(tab.url);
+  const template = [
+    { label: 'Adicionar aos favoritos', enabled: !bookmarked, click: () => addBookmark(tab) },
+    { label: 'Remover dos favoritos', enabled: bookmarked, click: () => removeBookmarkByUrl(tab.url) },
+    { type: 'separator' },
+    { label: 'Adicionar à tela inicial (Speed Dial)', type: 'checkbox', checked: speedDial, click: () => toggleSpeedDial(tab) },
+    { type: 'separator' },
+    { label: 'Gerenciar favoritos...', click: () => openBookmarksWindow() },
+  ];
+  Menu.buildFromTemplate(template).popup({ window: mainWindow, x: pos?.x, y: pos?.y });
+}
+
 function layoutActiveView() {
   const tab = getActiveTab();
   if (!tab) return;
@@ -149,6 +373,7 @@ function sendTabsUpdate() {
       url: t.url,
       muted: t.muted,
       audible: t.view.webContents.isCurrentlyAudible(),
+      bookmarked: isBookmarked(t.url),
     })),
     activeTabId,
     canGoBack: tab ? tab.view.webContents.canGoBack() : false,
@@ -290,6 +515,7 @@ function handleShortcut(input) {
   if ((ctrl && key === 'r') || key === 'f5') { if (tab) tab.view.webContents.reload(); return true; }
   if (ctrl && key === 'h') { openHistoryWindow(); return true; }
   if (ctrl && key === 'd') { openDownloadsWindow(); return true; }
+  if (ctrl && key === 'b') { openBookmarksWindow(); return true; }
   if (ctrl && key === 'f') { mainWindow.webContents.send('ui:toggle-findbar'); return true; }
   if (ctrl && key === 's') {
     if (tab) {
@@ -419,6 +645,14 @@ ipcMain.handle('history:clear', () => {
 ipcMain.handle('downloads:get', () => downloads);
 ipcMain.handle('downloads:showInFolder', (_e, filePath) => shell.showItemInFolder(filePath));
 
+ipcMain.on('bookmarks:showMenu', (_e, pos) => showBookmarkMenu(pos));
+ipcMain.handle('bookmarks:get', () => bookmarks);
+ipcMain.handle('bookmarks:remove', (_e, id) => removeItem(id));
+ipcMain.handle('bookmarks:rename', (_e, id, title) => renameItem(id, title));
+ipcMain.handle('bookmarks:move', (_e, id, parentId) => moveItem(id, parentId));
+ipcMain.handle('bookmarks:addFolder', (_e, title, parentId) => addFolder(title, parentId));
+ipcMain.handle('bookmarks:toggleSpeedDial', (_e, id) => toggleSpeedDialById(id));
+
 ipcMain.handle('print:get-default-path', () => {
   const safeName = (printTab?.title || 'pagina').replace(/[\\/:*?"<>|]/g, '_');
   return path.join(app.getPath('downloads'), `${safeName}.pdf`);
@@ -474,6 +708,7 @@ app.whenReady().then(() => {
   // Sem isso, o menu padrão do Electron reserva Ctrl+R para recarregar a
   // janela principal (index.html) e colidiria com o Ctrl+R de recarregar a aba.
   Menu.setApplicationMenu(null);
+  loadBookmarks();
   createMainWindow();
 });
 
