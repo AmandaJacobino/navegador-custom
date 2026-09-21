@@ -410,6 +410,10 @@ async function load() {
 }
 
 newFolderBtn.addEventListener('click', () => showNewFolderForm(newFolderRow, null));
+// Ctrl+N não tinha nenhum uso no app — vira o atalho de "nova pasta" só
+// enquanto esta janela está em foco (registrado por janela no main.js,
+// igual ao Ctrl+W de cada janela secundária).
+window.bookmarksAPI.onNewFolderShortcut(() => showNewFolderForm(newFolderRow, null));
 
 window.bookmarksAPI.onUpdate(render);
 load();

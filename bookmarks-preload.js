@@ -12,4 +12,5 @@ contextBridge.exposeInMainWorld('bookmarksAPI', {
   addFolder: (title, parentId) => ipcRenderer.invoke('bookmarks:addFolder', title, parentId),
   toggleSpeedDial: (id) => ipcRenderer.invoke('bookmarks:toggleSpeedDial', id),
   onUpdate: (callback) => ipcRenderer.on('bookmarks:update', (_e, data) => callback(data)),
+  onNewFolderShortcut: (callback) => ipcRenderer.on('bookmarks:new-folder-shortcut', callback),
 });

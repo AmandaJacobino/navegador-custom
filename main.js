@@ -145,6 +145,12 @@ function openBookmarksWindow() {
   bookmarksWindow.setMenuBarVisibility(false);
   bookmarksWindow.loadFile('bookmarks.html');
   closeOnCtrlW(bookmarksWindow);
+  bookmarksWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.type === 'keyDown' && input.control && input.key.toLowerCase() === 'n') {
+      event.preventDefault();
+      bookmarksWindow.webContents.send('bookmarks:new-folder-shortcut');
+    }
+  });
   bookmarksWindow.on('closed', () => { bookmarksWindow = null; });
 }
 
