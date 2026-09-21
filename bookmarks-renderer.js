@@ -4,6 +4,7 @@ const newFolderBtn = document.getElementById('new-folder-btn');
 const newFolderRow = document.getElementById('new-folder-row');
 
 let items = [];
+const collapsedFolders = new Set();
 
 // Mover um favorito arrastando pra uma pasta (issue #9) via mouse events em
 // vez do drag-and-drop HTML5 nativo — mesmo problema documentado em
@@ -239,12 +240,28 @@ function renderBookmarkRow(entry) {
   return li;
 }
 
-function renderFolderNode(folder) {
+// Alterna a lista de filhos de uma pasta entre recolhida e aberta,
+// sincronizando o estado do botão de disclosure (aria-expanded/label).
+function setFolderCollapsed(childList, toggleBtn, collapsed) {
+  toggleBtn.setAttribute('aria-expanded', String(!collapsed));
+  toggleBtn.setAttribute('aria-label', collapsed ? 'Expandir pasta' : 'Recolher pasta');
+  childList.hidden = collapsed;
+}
+
+function renderFolderNode(folder, depth = 0) {
   const li = document.createElement('li');
   const count = countDescendants(folder.id);
+  const childrenId = `children-${folder.id}`;
+  const isCollapsed = collapsedFolders.has(folder.id);
   li.innerHTML = `
-    <div class="row" data-drop-folder-id="${folder.id}">
-      <span class="folder-icon">▸</span>
+    <div class="row folder-row" data-drop-folder-id="${folder.id}">
+      <button
+        type="button"
+        class="folder-toggle"
+        aria-expanded="${!isCollapsed}"
+        aria-controls="${childrenId}"
+        aria-label="${isCollapsed ? 'Expandir pasta' : 'Recolher pasta'}"
+      ><span class="chevron-icon" aria-hidden="true">▸</span></button>
       <span class="folder-title" title="Renomear">${folder.title}</span>
       <span class="folder-count">${count}</span>
       <span class="move-slot"></span>
@@ -253,8 +270,26 @@ function renderFolderNode(folder) {
     </div>
   `;
   const row = li.querySelector('.row');
+  row.style.setProperty('--depth', String(depth));
+  const toggleBtn = li.querySelector('.folder-toggle');
   li.querySelector('.move-slot').replaceWith(renderFolderPicker(folder, folderAndDescendantIds(folder.id)));
 
+  const childList = document.createElement('ul');
+  childList.id = childrenId;
+  renderLevel(childList, folder.id, depth + 1);
+  li.appendChild(childList);
+  setFolderCollapsed(childList, toggleBtn, isCollapsed);
+
+  // Clicar em qualquer ponto vazio da linha (não só no botão ▸) recolhe ou
+  // reabre a pasta — só os controles com ação própria (renomear, mover,
+  // nova subpasta, remover) ficam de fora.
+  row.addEventListener('click', (e) => {
+    if (e.target.closest('.folder-title, .folder-picker, .add-sub-btn, .delete-btn')) return;
+    const willCollapse = !collapsedFolders.has(folder.id);
+    if (willCollapse) collapsedFolders.add(folder.id);
+    else collapsedFolders.delete(folder.id);
+    setFolderCollapsed(childList, toggleBtn, willCollapse);
+  });
   li.querySelector('.folder-title').addEventListener('click', (e) => {
     editInline(e.target, folder.title, (title) => window.bookmarksAPI.rename(folder.id, title).then(load));
   });
@@ -263,15 +298,12 @@ function renderFolderNode(folder) {
     window.bookmarksAPI.remove(folder.id).then(load);
   });
 
-  const childList = document.createElement('ul');
-  renderLevel(childList, folder.id);
-  li.appendChild(childList);
   return li;
 }
 
-function renderLevel(container, parentId) {
+function renderLevel(container, parentId, depth = 0) {
   const children = items.filter((b) => (b.parentId ?? null) === parentId);
-  children.filter((b) => b.type === 'folder').forEach((f) => container.appendChild(renderFolderNode(f)));
+  children.filter((b) => b.type === 'folder').forEach((f) => container.appendChild(renderFolderNode(f, depth)));
   children.filter((b) => b.type === 'bookmark').forEach((b) => container.appendChild(renderBookmarkRow(b)));
 }
 

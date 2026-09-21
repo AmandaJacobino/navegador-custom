@@ -94,11 +94,19 @@
   }
   #tree ul {
     list-style: none;
-    margin: 2px 0 2px 0;
+    /* Sem margem própria: só o li (abaixo) define espaçamento vertical.
+       Antes, a margem daqui somava com a margem do li e deixava o espaço
+       depois de uma pasta aberta maior que entre as outras linhas. */
+    margin: 0;
     padding-left: 20px;
     border-left: 1px solid var(--border);
   }
-  #tree li { border-radius: 6px; }
+  /* Espaço entre itens da árvore — sem isso, pastas fechadas (sem filhos
+     visíveis abrindo espaço entre elas) ficam grudadas umas nas outras.
+     Uma única regra de margem, em qualquer profundidade, pra manter o
+     espaçamento uniforme entre todas as linhas. */
+  #tree li { border-radius: 6px; margin-bottom: 3px; }
+  #tree li:last-child { margin-bottom: 0; }
   .row {
     display: flex;
     align-items: center;
@@ -110,10 +118,42 @@
   .row.drag-over { background: var(--accent-soft); outline: 1px dashed var(--accent); }
   .bookmark-row.dragging { opacity: 0.4; }
 
-  .folder-icon, .bookmark-dot {
+  /* Destaque de fundo pra diferenciar pastas dos favoritos soltos na
+     árvore — .row:hover/.row.drag-over têm mais especificidade (classe +
+     pseudo-classe) que esta única classe, então continuam vencendo em
+     hover/drag sem precisar duplicar regra. Cada nível de profundidade
+     recebe um tom um pouco mais claro que o anterior (--depth setado via
+     JS em bookmarks-renderer.js), pra dar noção visual de aninhamento sem
+     precisar de mais indentação. Limitado a 6 níveis pra não estourar pra
+     um cinza claro demais em árvores bem fundas. color-mix() tem suporte
+     desde o Chrome 111, então funciona no Chromium do Electron 31. */
+  .folder-row {
+    background: color-mix(in srgb, var(--surface) 100%, white calc(min(var(--depth, 0), 6) * 4%));
+    cursor: pointer;
+  }
+
+  .bookmark-dot {
     flex-shrink: 0;
     color: var(--muted);
   }
+  .folder-toggle {
+    flex-shrink: 0;
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    /* Ao contrário dos outros botões de ação (★ ✕ +), o toggle de
+       recolher/expandir precisa ficar sempre visível — é a única forma de
+       reabrir uma pasta recolhida, não um extra que aparece no hover. */
+    opacity: 1 !important;
+  }
+  .folder-toggle:hover { background: var(--surface-hover); color: var(--ink); }
+  .folder-toggle .chevron-icon { display: inline-block; }
+  .folder-toggle[aria-expanded="true"] .chevron-icon { transform: rotate(90deg); }
   .folder-title {
     flex: 1;
     cursor: pointer;
