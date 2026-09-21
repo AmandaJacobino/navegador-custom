@@ -163,15 +163,17 @@ function showNewFolderForm(afterEl, parentId) {
   form.className = 'row new-folder-form';
   form.innerHTML = `<input type="text" placeholder="Nome da pasta" /> <button class="confirm-btn">Criar</button>`;
   afterEl.insertAdjacentElement('afterend', form);
+  animateElementEntrance(form);
 
   const input = form.querySelector('input');
   const confirmBtn = form.querySelector('.confirm-btn');
   input.focus();
   let submitted = false;
+  const cancel = () => { animateElementRemoval(form).then(() => form.remove()); };
   const submit = () => {
     if (submitted) return;
     const title = input.value.trim();
-    if (!title) { form.remove(); return; }
+    if (!title) { cancel(); return; }
     submitted = true;
     confirmBtn.disabled = true;
     // O formulário de pasta na raiz fica fora de #tree (fica ao lado do
@@ -185,7 +187,7 @@ function showNewFolderForm(afterEl, parentId) {
   confirmBtn.addEventListener('click', submit);
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') submit();
-    if (e.key === 'Escape') form.remove();
+    if (e.key === 'Escape') cancel();
   });
 }
 
@@ -290,20 +292,20 @@ function setFolderCollapsed(childList, toggleBtn, collapsed, { animate = true } 
   }
 }
 
-// Anima a saída de uma linha da árvore (usado ao excluir uma pasta) antes
-// de mexer nos dados de verdade — sem isso o item some de golpe assim que
-// o backend responde, já que load() troca #tree inteiro pelo HTML novo.
-function animateRowRemoval(li) {
+// Anima a saída de um elemento (linha da árvore ao excluir uma pasta,
+// formulário de nova pasta ao cancelar) antes de mexer nos dados de
+// verdade ou removê-lo — sem isso ele some de golpe.
+function animateElementRemoval(el) {
   return new Promise((resolve) => {
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
       resolve();
       return;
     }
-    const startHeight = li.getBoundingClientRect().height;
-    const startMargin = getComputedStyle(li).marginBottom;
-    li.style.overflow = 'hidden';
-    li.style.pointerEvents = 'none';
-    const anim = li.animate(
+    const startHeight = el.getBoundingClientRect().height;
+    const startMargin = getComputedStyle(el).marginBottom;
+    el.style.overflow = 'hidden';
+    el.style.pointerEvents = 'none';
+    const anim = el.animate(
       [
         { opacity: 1, height: `${startHeight}px`, marginBottom: startMargin },
         { opacity: 0, height: '0px', marginBottom: '0px' },
@@ -312,6 +314,28 @@ function animateRowRemoval(li) {
     );
     anim.onfinish = resolve;
   });
+}
+
+// Contrário de animateElementRemoval — usado ao inserir o formulário de
+// nova pasta, pra ele crescer suavemente em vez de aparecer de golpe. O
+// elemento já precisa estar no DOM (com o tamanho final) quando chamada.
+function animateElementEntrance(el) {
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const endHeight = el.getBoundingClientRect().height;
+  const endMargin = getComputedStyle(el).marginBottom;
+  el.style.overflow = 'hidden';
+  const anim = el.animate(
+    [
+      { opacity: 0, height: '0px', marginBottom: '0px' },
+      { opacity: 1, height: `${endHeight}px`, marginBottom: endMargin },
+    ],
+    { duration: 200, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'forwards' },
+  );
+  anim.onfinish = () => {
+    el.style.height = '';
+    el.style.overflow = '';
+    el.style.marginBottom = '';
+  };
 }
 
 function renderFolderNode(folder, depth = 0) {
@@ -361,7 +385,7 @@ function renderFolderNode(folder, depth = 0) {
   });
   li.querySelector('.add-sub-btn').addEventListener('click', () => showNewFolderForm(row, folder.id));
   li.querySelector('.delete-btn').addEventListener('click', () => {
-    animateRowRemoval(li).then(() => window.bookmarksAPI.remove(folder.id).then(load));
+    animateElementRemoval(li).then(() => window.bookmarksAPI.remove(folder.id).then(load));
   });
 
   return li;
