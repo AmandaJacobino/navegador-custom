@@ -152,8 +152,16 @@
     opacity: 1 !important;
   }
   .folder-toggle:hover { background: var(--surface-hover); color: var(--ink); }
-  .folder-toggle .chevron-icon { display: inline-block; }
+  .folder-toggle .chevron-icon {
+    display: inline-block;
+    /* Mesma duração/curva da animação de altura em bookmarks-renderer.js
+       (Web Animations API), pra girar e abrir em sincronia. */
+    transition: transform 220ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
   .folder-toggle[aria-expanded="true"] .chevron-icon { transform: rotate(90deg); }
+  @media (prefers-reduced-motion: reduce) {
+    .folder-toggle .chevron-icon { transition: none; }
+  }
   .folder-title {
     flex: 1;
     cursor: pointer;

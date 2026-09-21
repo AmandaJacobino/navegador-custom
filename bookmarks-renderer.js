@@ -240,12 +240,78 @@ function renderBookmarkRow(entry) {
   return li;
 }
 
-// Alterna a lista de filhos de uma pasta entre recolhida e aberta,
-// sincronizando o estado do botão de disclosure (aria-expanded/label).
-function setFolderCollapsed(childList, toggleBtn, collapsed) {
+// Anima a lista de filhos de uma pasta entre recolhida e aberta usando a
+// Web Animations API (funciona em qualquer Chromium, ao contrário de
+// interpolate-size/calc-size(), que só chegaram no Chrome 129 — o
+// Electron 31 empacota o Chromium 126). Os keyframes de altura são
+// definidos explicitamente, então não dependem do estilo atual do
+// elemento nem exigem forçar reflow.
+function setFolderCollapsed(childList, toggleBtn, collapsed, { animate = true } = {}) {
   toggleBtn.setAttribute('aria-expanded', String(!collapsed));
   toggleBtn.setAttribute('aria-label', collapsed ? 'Expandir pasta' : 'Recolher pasta');
-  childList.hidden = collapsed;
+
+  childList.getAnimations().forEach((a) => a.cancel());
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  if (!animate || reduceMotion) {
+    childList.style.height = '';
+    childList.style.overflow = '';
+    childList.hidden = collapsed;
+    return;
+  }
+
+  const duration = 220;
+  const easing = 'cubic-bezier(0.4, 0, 0.2, 1)';
+
+  if (collapsed) {
+    const startHeight = childList.scrollHeight;
+    childList.style.overflow = 'hidden';
+    const anim = childList.animate(
+      [{ height: `${startHeight}px` }, { height: '0px' }],
+      { duration, easing, fill: 'forwards' },
+    );
+    anim.onfinish = () => {
+      childList.hidden = true;
+      childList.style.height = '';
+      childList.style.overflow = '';
+    };
+  } else {
+    childList.hidden = false;
+    const endHeight = childList.scrollHeight;
+    childList.style.overflow = 'hidden';
+    const anim = childList.animate(
+      [{ height: '0px' }, { height: `${endHeight}px` }],
+      { duration, easing, fill: 'forwards' },
+    );
+    anim.onfinish = () => {
+      childList.style.height = '';
+      childList.style.overflow = '';
+    };
+  }
+}
+
+// Anima a saída de uma linha da árvore (usado ao excluir uma pasta) antes
+// de mexer nos dados de verdade — sem isso o item some de golpe assim que
+// o backend responde, já que load() troca #tree inteiro pelo HTML novo.
+function animateRowRemoval(li) {
+  return new Promise((resolve) => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      resolve();
+      return;
+    }
+    const startHeight = li.getBoundingClientRect().height;
+    const startMargin = getComputedStyle(li).marginBottom;
+    li.style.overflow = 'hidden';
+    li.style.pointerEvents = 'none';
+    const anim = li.animate(
+      [
+        { opacity: 1, height: `${startHeight}px`, marginBottom: startMargin },
+        { opacity: 0, height: '0px', marginBottom: '0px' },
+      ],
+      { duration: 200, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'forwards' },
+    );
+    anim.onfinish = resolve;
+  });
 }
 
 function renderFolderNode(folder, depth = 0) {
@@ -278,7 +344,7 @@ function renderFolderNode(folder, depth = 0) {
   childList.id = childrenId;
   renderLevel(childList, folder.id, depth + 1);
   li.appendChild(childList);
-  setFolderCollapsed(childList, toggleBtn, isCollapsed);
+  setFolderCollapsed(childList, toggleBtn, isCollapsed, { animate: false });
 
   // Clicar em qualquer ponto vazio da linha (não só no botão ▸) recolhe ou
   // reabre a pasta — só os controles com ação própria (renomear, mover,
@@ -295,7 +361,7 @@ function renderFolderNode(folder, depth = 0) {
   });
   li.querySelector('.add-sub-btn').addEventListener('click', () => showNewFolderForm(row, folder.id));
   li.querySelector('.delete-btn').addEventListener('click', () => {
-    window.bookmarksAPI.remove(folder.id).then(load);
+    animateRowRemoval(li).then(() => window.bookmarksAPI.remove(folder.id).then(load));
   });
 
   return li;
