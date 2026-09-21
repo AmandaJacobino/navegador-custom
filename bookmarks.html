@@ -300,6 +300,61 @@
     padding: 20px;
     color: var(--muted);
   }
+
+  /* Confirmação antes de excluir uma pasta com conteúdo dentro — <dialog>
+     nativo em vez de overlay customizado: trapa foco e fecha com Esc de
+     graça. Sem closedby="any" (light-dismiss no clique fora): só existe a
+     partir do Chrome 134, e o Electron 31 empacota o Chromium 126. Uma
+     ação destrutiva não precisar de light-dismiss não é perda nenhuma. */
+  #confirm-delete-dialog {
+    background: var(--surface);
+    color: var(--ink);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    width: 300px;
+    box-shadow: 0 20px 48px rgba(0, 0, 0, 0.5);
+  }
+  #confirm-delete-dialog::backdrop {
+    background: rgba(0, 0, 0, 0.5);
+  }
+  #confirm-delete-dialog h2 {
+    margin: 0 0 14px 0;
+    font-size: 14px;
+    text-align: center;
+  }
+  #confirm-delete-dialog p {
+    margin: 0 0 2px 0;
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.5;
+    text-align: center;
+  }
+  #confirm-delete-dialog .confirm-delete-warning {
+    margin-bottom: 18px;
+  }
+  #confirm-delete-dialog .dialog-actions {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+  }
+  #confirm-delete-dialog button {
+    font-family: inherit;
+    font-size: 12px;
+    padding: 6px 14px;
+    border-radius: 6px;
+    border: none;
+    cursor: pointer;
+    transition: background-color 150ms ease, color 150ms ease, transform 100ms ease;
+  }
+  #confirm-delete-dialog button:active { transform: scale(0.96); }
+  #confirm-delete-dialog button[value="cancel"] { background: none; color: var(--muted); }
+  #confirm-delete-dialog button[value="cancel"]:hover { color: var(--ink); }
+  #confirm-delete-dialog button[value="confirm"] { background: #e5484d; color: #fff; font-weight: 600; }
+  #confirm-delete-dialog button[value="confirm"]:hover { background: #ff5b60; }
+  @media (prefers-reduced-motion: reduce) {
+    #confirm-delete-dialog button { transition: none; }
+  }
 </style>
 </head>
 <body>
@@ -311,6 +366,18 @@
   </div>
   <ul id="tree"></ul>
   <div id="empty" hidden>Nenhum favorito salvo ainda.</div>
+
+  <dialog id="confirm-delete-dialog" aria-labelledby="confirm-delete-title">
+    <form method="dialog">
+      <h2 id="confirm-delete-title">Excluir pasta</h2>
+      <p class="confirm-delete-message"></p>
+      <p class="confirm-delete-warning">Essa ação não pode ser desfeita.</p>
+      <div class="dialog-actions">
+        <button type="submit" value="cancel">Cancelar</button>
+        <button type="submit" value="confirm">Excluir tudo</button>
+      </div>
+    </form>
+  </dialog>
 
   <script src="bookmarks-renderer.js"></script>
 </body>

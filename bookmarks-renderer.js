@@ -2,6 +2,8 @@ const tree = document.getElementById('tree');
 const empty = document.getElementById('empty');
 const newFolderBtn = document.getElementById('new-folder-btn');
 const newFolderRow = document.getElementById('new-folder-row');
+const confirmDeleteDialog = document.getElementById('confirm-delete-dialog');
+const confirmDeleteMessage = confirmDeleteDialog.querySelector('.confirm-delete-message');
 
 let items = [];
 const collapsedFolders = new Set();
@@ -198,6 +200,21 @@ function countDescendants(folderId) {
   }, 0);
 }
 
+// Excluir uma pasta apaga tudo dentro dela junto — sem aviso nenhum antes
+// disso já causou perda de dados sem querer. Pede confirmação mesmo pra
+// pasta vazia, pra manter o botão de excluir sempre com a mesma trava.
+function confirmFolderDeletion(folder) {
+  confirmDeleteMessage.textContent = `Tem certeza que deseja excluir "${folder.title}"?`;
+  confirmDeleteDialog.showModal();
+  return new Promise((resolve) => {
+    confirmDeleteDialog.addEventListener(
+      'close',
+      () => resolve(confirmDeleteDialog.returnValue === 'confirm'),
+      { once: true },
+    );
+  });
+}
+
 function renderBookmarkRow(entry) {
   const li = document.createElement('li');
   li.innerHTML = `
@@ -385,7 +402,10 @@ function renderFolderNode(folder, depth = 0) {
   });
   li.querySelector('.add-sub-btn').addEventListener('click', () => showNewFolderForm(row, folder.id));
   li.querySelector('.delete-btn').addEventListener('click', () => {
-    animateElementRemoval(li).then(() => window.bookmarksAPI.remove(folder.id).then(load));
+    confirmFolderDeletion(folder).then((confirmed) => {
+      if (!confirmed) return;
+      animateElementRemoval(li).then(() => window.bookmarksAPI.remove(folder.id).then(load));
+    });
   });
 
   return li;
