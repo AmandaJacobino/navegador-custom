@@ -4,9 +4,16 @@ const newFolderBtn = document.getElementById('new-folder-btn');
 const newFolderRow = document.getElementById('new-folder-row');
 const confirmDeleteDialog = document.getElementById('confirm-delete-dialog');
 const confirmDeleteMessage = confirmDeleteDialog.querySelector('.confirm-delete-message');
+const bulkBar = document.getElementById('bulk-bar');
+const bulkCount = bulkBar.querySelector('.bulk-count');
+const bulkMoveSlot = document.getElementById('bulk-move-slot');
+const bulkCancelBtn = bulkBar.querySelector('.bulk-cancel');
 
 let items = [];
 const collapsedFolders = new Set();
+// Seleção em massa (issue #9) — ids de favoritos e/ou pastas marcados pra
+// mover de uma vez, independente de profundidade na árvore.
+const selectedIds = new Set();
 
 // Mover um favorito arrastando pra uma pasta (issue #9) via mouse events em
 // vez do drag-and-drop HTML5 nativo — mesmo problema documentado em
@@ -91,17 +98,18 @@ function positionFolderPanel(trigger, panel) {
   panel.style.left = `${Math.min(rect.left, window.innerWidth - panelRect.width - 8)}px`;
 }
 
-// Dropdown customizado pra mover um item (favorito ou pasta) pra outra
-// pasta, usando a Popover API (suportada desde o Chrome 116, então
-// funciona no Chromium do Electron 31) em vez de um <select> nativo, que
-// não combinava com o resto do visual.
-function renderFolderPicker(item, excludeIds = new Set()) {
+// Dropdown customizado de "mover pra pasta", usando a Popover API
+// (suportada desde o Chrome 116, então funciona no Chromium do Electron
+// 31) em vez de um <select> nativo, que não combinava com o resto do
+// visual. Compartilhado entre o seletor de cada linha (um item por vez) e
+// o da barra de seleção em massa (vários de uma vez) — só muda o rótulo
+// do botão, quais pastas ficam de fora da lista e o que roda ao escolher.
+function renderFolderPickerBase(panelId, triggerLabel, excludeIds, onSelect) {
   const wrapper = document.createElement('div');
   wrapper.className = 'folder-picker';
-  const panelId = `fp-${item.id}`;
   wrapper.innerHTML = `
     <button type="button" class="folder-picker-trigger" popovertarget="${panelId}" popovertargetaction="toggle" title="Mover para pasta">
-      <span class="current">${folderLabel(item.parentId)}</span>
+      <span class="current">${triggerLabel}</span>
       <span class="chevron">▾</span>
     </button>
     <div id="${panelId}" class="folder-picker-panel" popover="auto"></div>
@@ -122,11 +130,63 @@ function renderFolderPicker(item, excludeIds = new Set()) {
     opt.addEventListener('click', () => {
       const value = opt.dataset.value;
       panel.hidePopover();
-      window.bookmarksAPI.move(item.id, value ? Number(value) : null).then(load);
+      onSelect(value ? Number(value) : null);
     });
   });
   return wrapper;
 }
+
+function renderFolderPicker(item, excludeIds = new Set()) {
+  return renderFolderPickerBase(
+    `fp-${item.id}`,
+    folderLabel(item.parentId),
+    excludeIds,
+    (targetId) => window.bookmarksAPI.move(item.id, targetId).then(load),
+  );
+}
+
+// Pastas que não podem ser destino da seleção em massa: qualquer pasta
+// selecionada e todas as suas descendentes (moveria a pasta pra dentro
+// dela mesma). Bem menos comum que o caso de um item só, mas o mesmo
+// motivo do folderAndDescendantIds de um item vale aqui.
+function selectedExcludedFolderIds() {
+  const excluded = new Set();
+  selectedIds.forEach((id) => {
+    const entry = items.find((b) => b.id === id);
+    if (entry?.type === 'folder') folderAndDescendantIds(entry.id).forEach((fid) => excluded.add(fid));
+  });
+  return excluded;
+}
+
+async function bulkMoveSelected(targetId) {
+  const ids = Array.from(selectedIds);
+  await Promise.all(ids.map((id) => window.bookmarksAPI.move(id, targetId)));
+  selectedIds.clear();
+  load();
+}
+
+function updateBulkBar() {
+  const count = selectedIds.size;
+  document.body.classList.toggle('has-bulk-bar', count > 0);
+  bulkBar.classList.toggle('visible', count > 0);
+  bulkMoveSlot.innerHTML = '';
+  if (count === 0) return;
+  bulkCount.textContent = count === 1 ? '1 item selecionado' : `${count} itens selecionados`;
+  bulkMoveSlot.appendChild(
+    renderFolderPickerBase('bulk-move-panel', 'Mover para', selectedExcludedFolderIds(), bulkMoveSelected),
+  );
+}
+
+function toggleSelected(id, checked) {
+  if (checked) selectedIds.add(id);
+  else selectedIds.delete(id);
+  updateBulkBar();
+}
+
+bulkCancelBtn.addEventListener('click', () => {
+  selectedIds.clear();
+  render(items);
+});
 
 // Substitui um elemento por um <input> inline pra edição (Electron não
 // implementa window.prompt() no Linux — ele retorna null sem abrir diálogo
@@ -220,6 +280,7 @@ function renderBookmarkRow(entry) {
   li.innerHTML = `
     <div class="row bookmark-row">
       <div class="row-main">
+        <input type="checkbox" class="select-checkbox" aria-label="Selecionar ${entry.title || entry.url}" />
         <span class="bookmark-dot">●</span>
         <span class="entry-title" title="Renomear">${entry.title || entry.url}</span>
         <button class="speeddial-toggle ${entry.speedDial ? 'active' : ''}" title="Tela inicial">★</button>
@@ -232,11 +293,15 @@ function renderBookmarkRow(entry) {
   const row = li.querySelector('.row');
   li.querySelector('.move-slot').replaceWith(renderFolderPicker(entry));
 
+  const checkbox = li.querySelector('.select-checkbox');
+  checkbox.checked = selectedIds.has(entry.id);
+  checkbox.addEventListener('change', () => toggleSelected(entry.id, checkbox.checked));
+
   // Arrastar um favorito pra cima de uma pasta move ele pra lá — o select
   // continua funcionando como alternativa (útil quando a pasta de destino
   // tem muitos itens e mirar nela com o mouse fica ruim).
   row.addEventListener('mousedown', (e) => {
-    if (e.button !== 0 || e.target.closest('select') || e.target.closest('button')) return;
+    if (e.button !== 0 || e.target.closest('select') || e.target.closest('button') || e.target.closest('input')) return;
     dragBookmark = { id: entry.id, el: row, startX: e.clientX, startY: e.clientY, moved: false, hoverRow: null };
     document.addEventListener('mousemove', onBookmarkDragMove);
     document.addEventListener('mouseup', onBookmarkDragEnd);
@@ -362,6 +427,7 @@ function renderFolderNode(folder, depth = 0) {
   const isCollapsed = collapsedFolders.has(folder.id);
   li.innerHTML = `
     <div class="row folder-row" data-drop-folder-id="${folder.id}">
+      <input type="checkbox" class="select-checkbox" aria-label="Selecionar pasta ${folder.title}" />
       <button
         type="button"
         class="folder-toggle"
@@ -387,11 +453,15 @@ function renderFolderNode(folder, depth = 0) {
   li.appendChild(childList);
   setFolderCollapsed(childList, toggleBtn, isCollapsed, { animate: false });
 
+  const checkbox = li.querySelector('.select-checkbox');
+  checkbox.checked = selectedIds.has(folder.id);
+  checkbox.addEventListener('change', () => toggleSelected(folder.id, checkbox.checked));
+
   // Clicar em qualquer ponto vazio da linha (não só no botão ▸) recolhe ou
-  // reabre a pasta — só os controles com ação própria (renomear, mover,
-  // nova subpasta, remover) ficam de fora.
+  // reabre a pasta — só os controles com ação própria (selecionar,
+  // renomear, mover, nova subpasta, remover) ficam de fora.
   row.addEventListener('click', (e) => {
-    if (e.target.closest('.folder-title, .folder-picker, .add-sub-btn, .delete-btn')) return;
+    if (e.target.closest('.select-checkbox, .folder-title, .folder-picker, .add-sub-btn, .delete-btn')) return;
     const willCollapse = !collapsedFolders.has(folder.id);
     if (willCollapse) collapsedFolders.add(folder.id);
     else collapsedFolders.delete(folder.id);
@@ -419,10 +489,15 @@ function renderLevel(container, parentId, depth = 0) {
 
 function render(list) {
   items = list;
+  // Um item selecionado pode ter sido removido (excluído, ou dentro de uma
+  // pasta excluída) entre uma seleção e outra — tira ele da seleção pra
+  // não contar na barra nem sobrar num alvo de mover em massa inválido.
+  selectedIds.forEach((id) => { if (!items.some((b) => b.id === id)) selectedIds.delete(id); });
 
   empty.hidden = items.length > 0;
   tree.innerHTML = '';
   renderLevel(tree, null);
+  updateBulkBar();
 }
 
 async function load() {

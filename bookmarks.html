@@ -301,6 +301,117 @@
     color: var(--muted);
   }
 
+  /* Checkbox de seleção em massa, em cada linha da árvore. appearance:none
+     + ::before troca a forma nativa (quadrado) por um círculo no estilo
+     do resto da página, mantendo o <input type="checkbox"> de verdade por
+     baixo (foco, teclado, :checked, leitor de tela). Some quando a linha
+     não está em hover/foco — igual aos outros botões de ação (★ ✕ +) —
+     mas continua visível enquanto marcado, senão a seleção fica invisível
+     assim que o mouse sai da linha. */
+  .select-checkbox {
+    flex-shrink: 0;
+    appearance: none;
+    margin: 0;
+    width: 15px;
+    height: 15px;
+    border-radius: 50%;
+    border: 1.5px solid var(--muted);
+    background: transparent;
+    display: grid;
+    place-content: center;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 150ms ease, border-color 150ms ease;
+  }
+  .select-checkbox::before {
+    content: '';
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent);
+    transform: scale(0);
+    transition: transform 120ms ease;
+  }
+  .select-checkbox:checked {
+    border-color: var(--accent);
+  }
+  .select-checkbox:checked::before {
+    transform: scale(1);
+  }
+  #tree .row:hover .select-checkbox,
+  .select-checkbox:focus-visible,
+  .select-checkbox:checked {
+    opacity: 1;
+  }
+  .select-checkbox:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .select-checkbox, .select-checkbox::before { transition: none; }
+  }
+
+  /* Espaço reservado embaixo pra barra de ações em massa não cobrir a
+     última linha da árvore — só quando ela está de fato visível. */
+  body.has-bulk-bar { padding-bottom: 52px; }
+
+  #bulk-bar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.35);
+    transform: translateY(100%);
+    transition: transform 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  #bulk-bar.visible { transform: translateY(0); }
+  #bulk-bar .bulk-count { flex: 1; font-size: 12px; color: var(--muted); }
+  #bulk-bar .bulk-cancel {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 12px;
+    font-family: inherit;
+    padding: 6px 10px;
+    border-radius: 6px;
+  }
+  #bulk-bar .bulk-cancel:hover { color: var(--ink); background: var(--surface-hover); }
+
+  /* Mesmo tratamento do botão "Criar" do formulário de nova pasta (único
+     botão sólido/preenchido que já existe no app) — não do "Cancelar" ao
+     lado, que é texto puro sem contorno. O chevron ▾ some aqui: um
+     indicador de dropdown dentro de um botão preenchido é uma combinação
+     que não existe em nenhum outro lugar da interface, e foi isso (não a
+     altura ou o arredondamento, que já batiam) que ficava destoando. */
+  #bulk-bar .folder-picker-trigger {
+    appearance: none;
+    background: var(--accent);
+    color: var(--bg);
+    border: none;
+    box-shadow: none;
+    font-size: 12px !important;
+    font-weight: 600;
+    padding: 5px 14px;
+    border-radius: 6px;
+    transition: background-color 150ms ease;
+  }
+  #bulk-bar .folder-picker-trigger:hover { background: #9376ff; }
+  #bulk-bar .folder-picker-trigger .current { max-width: none; }
+  #bulk-bar .folder-picker-trigger .chevron { display: none; }
+  @media (prefers-reduced-motion: reduce) {
+    #bulk-bar .folder-picker-trigger { transition: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #bulk-bar { transition: none; }
+  }
+
   /* Confirmação antes de excluir uma pasta com conteúdo dentro — <dialog>
      nativo em vez de overlay customizado: trapa foco e fecha com Esc de
      graça. Sem closedby="any" (light-dismiss no clique fora): só existe a
@@ -366,6 +477,12 @@
   </div>
   <ul id="tree"></ul>
   <div id="empty" hidden>Nenhum favorito salvo ainda.</div>
+
+  <div id="bulk-bar">
+    <span class="bulk-count"></span>
+    <div id="bulk-move-slot"></div>
+    <button type="button" class="bulk-cancel">Cancelar</button>
+  </div>
 
   <dialog id="confirm-delete-dialog" aria-labelledby="confirm-delete-title">
     <form method="dialog">
