@@ -124,6 +124,10 @@ btnBookmark.addEventListener('click', () => {
     left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom,
   });
 });
+// Rede de segurança: se o arraste do gerenciador de favoritos (ver
+// bookmarks-renderer.js) terminar com o cursor sobre a toolbar em vez de
+// sobre o próprio painel, esse mouseup nunca chegaria à view dele.
+document.addEventListener('mouseup', () => window.browserAPI.endBookmarksManagerDrag());
 
 address.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {

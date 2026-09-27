@@ -1,5 +1,19 @@
 const tree = document.getElementById('tree');
 const empty = document.getElementById('empty');
+const closeManagerBtn = document.getElementById('btn-close-manager');
+const managerHeader = document.getElementById('manager-header');
+closeManagerBtn.addEventListener('click', () => window.bookmarksAPI.closeManager());
+
+// Arrasta o overlay pelo cabeçalho. A posição em si é aplicada pelo processo
+// principal via BrowserView.setBounds (só ele pode mover a view) enquanto
+// consulta a posição do cursor na tela — não dá pra confiar só em mousemove
+// dentro deste documento porque ele só existe dentro do retângulo da própria
+// view: o cursor sai da área e os eventos param de chegar aqui.
+managerHeader.addEventListener('mousedown', (e) => {
+  if (e.button !== 0 || e.target.closest('#btn-close-manager')) return;
+  window.bookmarksAPI.startManagerDrag();
+});
+document.addEventListener('mouseup', () => window.bookmarksAPI.endManagerDrag());
 const newFolderBtn = document.getElementById('new-folder-btn');
 const newFolderRow = document.getElementById('new-folder-row');
 const confirmDeleteDialog = document.getElementById('confirm-delete-dialog');

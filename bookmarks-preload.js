@@ -13,4 +13,7 @@ contextBridge.exposeInMainWorld('bookmarksAPI', {
   toggleSpeedDial: (id) => ipcRenderer.invoke('bookmarks:toggleSpeedDial', id),
   onUpdate: (callback) => ipcRenderer.on('bookmarks:update', (_e, data) => callback(data)),
   onNewFolderShortcut: (callback) => ipcRenderer.on('bookmarks:new-folder-shortcut', callback),
+  closeManager: () => ipcRenderer.invoke('bookmarks:closeManager'),
+  startManagerDrag: () => ipcRenderer.invoke('bookmarks:managerDragStart'),
+  endManagerDrag: () => ipcRenderer.invoke('bookmarks:managerDragEnd'),
 });

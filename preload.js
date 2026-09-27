@@ -22,4 +22,5 @@ contextBridge.exposeInMainWorld('browserAPI', {
   findPrev: (text) => ipcRenderer.invoke('find:prev', text),
   findStop: () => ipcRenderer.invoke('find:stop'),
   openBookmarkMenu: (anchorRect) => ipcRenderer.invoke('bookmarks:openMenu', anchorRect),
+  endBookmarksManagerDrag: () => ipcRenderer.invoke('bookmarks:managerDragEnd'),
 });

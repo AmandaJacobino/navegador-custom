@@ -15,6 +15,15 @@
     --border: #29292e;
   }
   * { box-sizing: border-box; }
+  /* Contorno pra separar o overlay do conteúdo da página atrás dele — sem
+     isso os dois fundos escuros se confundem. Na tag html (não no body,
+     que só cresce até a altura do conteúdo) pra ficar sempre colado nas
+     bordas reais do retângulo da BrowserView, do tamanho exato dela. */
+  html {
+    height: 100%;
+    border: 1px solid var(--border);
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+  }
   body {
     margin: 0;
     background: var(--bg);
@@ -26,11 +35,29 @@
        o <input> de edição inline — inputs sempre permitem seleção própria. */
     user-select: none;
   }
+  #manager-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin: 18px 20px 12px 20px;
+    cursor: move;
+  }
   h1 {
     font-size: 16px;
     font-weight: 600;
-    margin: 18px 20px 12px 20px;
+    margin: 0;
   }
+  #btn-close-manager {
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: 6px;
+  }
+  #btn-close-manager:hover, #btn-close-manager:focus-visible { background: var(--surface-hover); color: var(--ink); }
   h2 {
     font-size: 12px;
     font-weight: 600;
@@ -469,7 +496,10 @@
 </style>
 </head>
 <body>
-  <h1>Favoritos</h1>
+  <div id="manager-header">
+    <h1>Favoritos</h1>
+    <button type="button" id="btn-close-manager" title="Fechar (Ctrl+W)">✕</button>
+  </div>
 
   <h2>Pastas e favoritos</h2>
   <div id="new-folder-row">
