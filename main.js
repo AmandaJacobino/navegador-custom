@@ -1,4 +1,4 @@
-const { app, BrowserWindow, BrowserView, ipcMain, Menu, shell, dialog } = require('electron');
+const { app, BrowserWindow, BrowserView, ipcMain, Menu, shell, dialog, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -6,6 +6,7 @@ const HISTORY_PRELOAD = path.join(__dirname, 'history-preload.js');
 const DOWNLOADS_PRELOAD = path.join(__dirname, 'downloads-preload.js');
 const PRINT_PRELOAD = path.join(__dirname, 'print-preload.js');
 const BOOKMARKS_PRELOAD = path.join(__dirname, 'bookmarks-preload.js');
+const BOOKMARK_MENU_PRELOAD = path.join(__dirname, 'bookmark-menu-preload.js');
 const BOOKMARKS_FILE = path.join(app.getPath('userData'), 'bookmarks.json');
 
 // Altura da barra de UI (abas + endereço) em pixels.
@@ -16,6 +17,8 @@ let mainWindow;
 let historyWindow = null;   // janela independente de histórico (Ctrl+H)
 let downloadsWindow = null; // janela independente de downloads (Ctrl+D)
 let bookmarksWindow = null; // janela independente de favoritos (Ctrl+B)
+let bookmarkMenuView = null; // BrowserView de overlay do dropdown da estrela
+let bookmarkMenuOpen = false;
 let printWindow = null;     // janela independente de impressão (Ctrl+P)
 let printTab = null;        // aba alvo da janela de impressão aberta
 let tabs = [];      // cada item: { id, view, title, url }
@@ -132,9 +135,24 @@ function openBookmarksWindow() {
     bookmarksWindow.focus();
     return;
   }
+  const width = 480;
+  const height = 600;
+  // Centralizada sobre a janela principal. Não dá pra confiar em x/y
+  // absolutos aqui: no Wayland nativo o cliente não escolhe a posição de
+  // uma janela toplevel, quem decide é o compositor — então mesmo essa
+  // conta só funciona como palpite em X11/XWayland.
+  const parentBounds = mainWindow.getContentBounds();
+  const rawX = parentBounds.x + Math.round((parentBounds.width - width) / 2);
+  const rawY = parentBounds.y + Math.round((parentBounds.height - height) / 2);
+  const workArea = screen.getDisplayMatching(parentBounds).workArea;
+  const x = Math.min(Math.max(rawX, workArea.x), workArea.x + workArea.width - width);
+  const y = Math.min(Math.max(rawY, workArea.y), workArea.y + workArea.height - height);
   bookmarksWindow = new BrowserWindow({
-    width: 480,
-    height: 600,
+    width,
+    height,
+    x,
+    y,
+    parent: mainWindow,
     title: 'Favoritos',
     webPreferences: {
       preload: BOOKMARKS_PRELOAD,
@@ -152,6 +170,66 @@ function openBookmarksWindow() {
     }
   });
   bookmarksWindow.on('closed', () => { bookmarksWindow = null; });
+}
+
+const BOOKMARK_MENU_WIDTH = 220;
+
+// Dropdown da estrela como uma segunda BrowserView, empilhada por cima da
+// BrowserView da página ativa. A página é uma camada nativa própria que
+// sempre desenha por cima do HTML da janela principal — nenhum popover em
+// index.html conseguiria aparecer acima dela. Empilhar outra BrowserView é
+// a única forma de sobrepor sem empurrar/esconder o conteúdo da página.
+function ensureBookmarkMenuView() {
+  if (bookmarkMenuView) return bookmarkMenuView;
+  bookmarkMenuView = new BrowserView({
+    webPreferences: {
+      preload: BOOKMARK_MENU_PRELOAD,
+      contextIsolation: true,
+      sandbox: true,
+    },
+  });
+  bookmarkMenuView.webContents.loadFile('bookmark-menu.html');
+  bookmarkMenuView.webContents.on('blur', closeBookmarkMenu);
+  bookmarkMenuView.webContents.on('before-input-event', (event, input) => {
+    if (input.type === 'keyDown' && input.key === 'Escape') closeBookmarkMenu();
+  });
+  return bookmarkMenuView;
+}
+
+let bookmarkMenuClosedAt = 0;
+
+function openBookmarkMenu(anchorRect) {
+  if (bookmarkMenuOpen) { closeBookmarkMenu(); return; }
+  // Clicar de novo na estrela pra fechar tira o foco da view antes do clique
+  // chegar aqui: o 'blur' já fechou o menu (bookmarkMenuOpen virou false) e,
+  // sem essa guarda, este mesmo clique reabriria o dropdown na sequência.
+  if (Date.now() - bookmarkMenuClosedAt < 250) return;
+  const tab = getActiveTab();
+  if (!tab || !mainWindow) return;
+  const view = ensureBookmarkMenuView();
+  mainWindow.addBrowserView(view);
+  bookmarkMenuOpen = true;
+  view.webContents.send('bookmark-menu:show', { bookmarked: isBookmarked(tab.url), speedDial: isSpeedDial(tab.url) });
+  const width = BOOKMARK_MENU_WIDTH;
+  const contentBounds = mainWindow.getContentBounds();
+  view.setBounds({ x: 0, y: 0, width, height: 10 });
+  view.webContents.executeJavaScript('document.body.offsetHeight').then((height) => {
+    if (!bookmarkMenuOpen) return; // fechado antes de terminar de medir
+    const spaceBelow = contentBounds.height - anchorRect.bottom;
+    const top = spaceBelow >= height ? anchorRect.bottom + 4 : Math.max(UI_HEIGHT, anchorRect.top - height - 4);
+    // -14 pra não invadir a faixa da barra de rolagem da página, que fica
+    // colada na borda direita do conteúdo.
+    const left = Math.min(anchorRect.right - width - 6, contentBounds.width - width - 10);
+    view.setBounds({ x: Math.max(0, Math.round(left)), y: Math.round(top), width, height: Math.ceil(height) });
+    view.webContents.focus();
+  });
+}
+
+function closeBookmarkMenu() {
+  if (!bookmarkMenuOpen || !mainWindow) return;
+  bookmarkMenuOpen = false;
+  bookmarkMenuClosedAt = Date.now();
+  mainWindow.removeBrowserView(bookmarkMenuView);
 }
 
 // bookmarks é uma lista plana de itens em árvore: cada um é um favorito
@@ -331,25 +409,6 @@ function toggleSpeedDialById(id) {
   persistAndBroadcast();
 }
 
-// Menu de contexto exibido ao clicar na estrela da toolbar (issue #9).
-// pos vem do renderer (posição do botão) pra abrir abaixo dele, em vez de
-// no cursor — senão o menu cobre o próprio botão que o abriu.
-function showBookmarkMenu(pos) {
-  const tab = getActiveTab();
-  if (!tab || !mainWindow) return;
-  const bookmarked = isBookmarked(tab.url);
-  const speedDial = isSpeedDial(tab.url);
-  const template = [
-    { label: 'Adicionar aos favoritos', enabled: !bookmarked, click: () => addBookmark(tab) },
-    { label: 'Remover dos favoritos', enabled: bookmarked, click: () => removeBookmarkByUrl(tab.url) },
-    { type: 'separator' },
-    { label: 'Adicionar à tela inicial (Speed Dial)', type: 'checkbox', checked: speedDial, click: () => toggleSpeedDial(tab) },
-    { type: 'separator' },
-    { label: 'Gerenciar favoritos...', click: () => openBookmarksWindow() },
-  ];
-  Menu.buildFromTemplate(template).popup({ window: mainWindow, x: pos?.x, y: pos?.y });
-}
-
 function layoutActiveView() {
   const tab = getActiveTab();
   if (!tab) return;
@@ -454,6 +513,7 @@ function activateTab(id) {
     previousTabId = activeTabId;
   }
   activeTabId = id;
+  closeBookmarkMenu(); // setBrowserView abaixo remove todas as views, inclusive a do dropdown
   mainWindow.setBrowserView(tab.view);
   layoutActiveView();
   // Trocar o BrowserView não move o foco de teclado sozinho — sem isso, os
@@ -580,6 +640,7 @@ function createMainWindow() {
 
   mainWindow.loadFile('index.html');
   mainWindow.on('resize', layoutActiveView);
+  mainWindow.on('resize', closeBookmarkMenu);
 
   mainWindow.webContents.on('before-input-event', (event, input) => {
     if (handleShortcut(input)) event.preventDefault();
@@ -651,7 +712,19 @@ ipcMain.handle('history:clear', () => {
 ipcMain.handle('downloads:get', () => downloads);
 ipcMain.handle('downloads:showInFolder', (_e, filePath) => shell.showItemInFolder(filePath));
 
-ipcMain.on('bookmarks:showMenu', (_e, pos) => showBookmarkMenu(pos));
+ipcMain.handle('bookmarks:toggleCurrent', () => {
+  const tab = getActiveTab();
+  if (!tab) return;
+  if (isBookmarked(tab.url)) removeBookmarkByUrl(tab.url);
+  else addBookmark(tab);
+});
+ipcMain.handle('bookmarks:toggleSpeedDialCurrent', () => {
+  const tab = getActiveTab();
+  if (tab) toggleSpeedDial(tab);
+});
+ipcMain.handle('bookmarks:openManage', () => openBookmarksWindow());
+ipcMain.handle('bookmarks:openMenu', (_e, anchorRect) => openBookmarkMenu(anchorRect));
+ipcMain.handle('bookmarks:closeMenu', () => closeBookmarkMenu());
 ipcMain.handle('bookmarks:get', () => bookmarks);
 ipcMain.handle('bookmarks:remove', (_e, id) => removeItem(id));
 ipcMain.handle('bookmarks:rename', (_e, id, title) => renameItem(id, title));
