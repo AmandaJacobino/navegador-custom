@@ -68,11 +68,23 @@ function render() {
     el.className = 'tab' + (tab.id === currentState.activeTabId ? ' active' : '');
     el.dataset.id = tab.id;
     const soundIcon = tab.muted ? '🔇' : tab.audible ? '🔊' : '';
-    el.innerHTML = `
-      <span class="title">${tab.title || 'Nova aba'}</span>
-      ${soundIcon ? `<span class="mute-icon" title="${tab.muted ? 'Ativar som' : 'Mutar aba'}">${soundIcon}</span>` : ''}
-      <span class="close" data-id="${tab.id}">✕</span>
-    `;
+    // textContent e não innerHTML: o título vem da página web, que controla o texto.
+    const title = document.createElement('span');
+    title.className = 'title';
+    title.textContent = tab.title || 'Nova aba';
+    el.append(title);
+    if (soundIcon) {
+      const mute = document.createElement('span');
+      mute.className = 'mute-icon';
+      mute.title = tab.muted ? 'Ativar som' : 'Mutar aba';
+      mute.textContent = soundIcon;
+      el.append(mute);
+    }
+    const close = document.createElement('span');
+    close.className = 'close';
+    close.dataset.id = tab.id;
+    close.textContent = '✕';
+    el.append(close);
     el.addEventListener('click', (e) => {
       if (suppressNextClick) { suppressNextClick = false; return; }
       if (e.target.classList.contains('close')) {
