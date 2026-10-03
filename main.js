@@ -9,6 +9,7 @@ const PRINT_PRELOAD = path.join(__dirname, 'print-preload.js');
 const BOOKMARKS_PRELOAD = path.join(__dirname, 'bookmarks-preload.js');
 const BOOKMARK_MENU_PRELOAD = path.join(__dirname, 'bookmark-menu-preload.js');
 const BOOKMARKS_FILE = path.join(app.getPath('userData'), 'bookmarks.json');
+const HISTORY_FILE = path.join(app.getPath('userData'), 'history.json');
 
 // Altura da barra de UI (abas + endereço) em pixels.
 // As páginas web (BrowserView) começam abaixo dessa altura.
@@ -257,6 +258,20 @@ function saveBookmarks() {
   fs.writeFileSync(BOOKMARKS_FILE, JSON.stringify(bookmarks, null, 2));
 }
 
+function loadHistory() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf-8'));
+    history = Array.isArray(parsed) ? parsed : [];
+    nextHistoryId = history.reduce((max, h) => Math.max(max, h.id), 0) + 1;
+  } catch {
+    history = [];
+  }
+}
+
+function saveHistory() {
+  fs.writeFileSync(HISTORY_FILE, JSON.stringify(history));
+}
+
 function sendBookmarksUpdate() {
   if (bookmarksPanel.isOpen()) {
     bookmarksPanel.getView().webContents.send('bookmarks:update', bookmarks);
@@ -433,13 +448,17 @@ function createTab(url = 'https://duckduckgo.com') {
     tab.title = title;
     // O título real costuma chegar depois do did-navigate, então atualiza a
     // entrada de histórico da navegação atual também.
-    if (tab.historyEntry) tab.historyEntry.title = title;
+    if (tab.historyEntry) {
+      tab.historyEntry.title = title;
+      saveHistory();
+    }
     sendTabsUpdate();
   });
   view.webContents.on('did-navigate', (_e, navUrl) => {
     tab.url = navUrl;
     tab.historyEntry = { id: nextHistoryId++, url: navUrl, title: '', timestamp: Date.now() };
     history.unshift(tab.historyEntry);
+    saveHistory();
     sendTabsUpdate();
   });
   view.webContents.on('did-navigate-in-page', (_e, navUrl) => {
@@ -690,9 +709,11 @@ ipcMain.handle('nav:reload', () => {
 ipcMain.handle('history:get', (_e, range) => filterHistory(range));
 ipcMain.handle('history:delete', (_e, id) => {
   history = history.filter((h) => h.id !== id);
+  saveHistory();
 });
 ipcMain.handle('history:clear', () => {
   history = [];
+  saveHistory();
 });
 ipcMain.handle('downloads:get', () => downloads);
 ipcMain.handle('downloads:showInFolder', (_e, filePath) => shell.showItemInFolder(filePath));
@@ -777,6 +798,7 @@ app.whenReady().then(() => {
   // janela principal (index.html) e colidiria com o Ctrl+R de recarregar a aba.
   Menu.setApplicationMenu(null);
   loadBookmarks();
+  loadHistory();
   createMainWindow();
 });
 
