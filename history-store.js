@@ -1,3 +1,4 @@
+const fs = require('fs');
 const { Database } = require('node-sqlite3-wasm');
 
 // Armazenamento do histórico de navegação em SQLite. O node-sqlite3-wasm é o
@@ -48,6 +49,26 @@ function openHistoryStore(file) {
 
     clear() {
       db.run('DELETE FROM visits');
+    },
+
+    // Importa o histórico antigo em JSON ({ id, url, title, timestamp }) numa
+    // única transação. Só renomeia o arquivo depois de gravar tudo, então uma
+    // falha no meio não perde dados e a próxima inicialização tenta de novo.
+    importLegacyJson(jsonFile) {
+      if (!fs.existsSync(jsonFile)) return 0;
+      const entries = JSON.parse(fs.readFileSync(jsonFile, 'utf-8'));
+      db.exec('BEGIN');
+      try {
+        for (const e of entries) {
+          db.run('INSERT INTO visits (url, title, visited_at) VALUES (?, ?, ?)', [e.url, e.title || '', e.timestamp]);
+        }
+        db.exec('COMMIT');
+      } catch (err) {
+        db.exec('ROLLBACK');
+        throw err;
+      }
+      fs.renameSync(jsonFile, jsonFile + '.migrated');
+      return entries.length;
     },
 
     close() {
