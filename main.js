@@ -431,11 +431,15 @@ function createTab(url = 'https://duckduckgo.com') {
 
   view.webContents.on('page-title-updated', (_e, title) => {
     tab.title = title;
+    // O título real costuma chegar depois do did-navigate, então atualiza a
+    // entrada de histórico da navegação atual também.
+    if (tab.historyEntry) tab.historyEntry.title = title;
     sendTabsUpdate();
   });
   view.webContents.on('did-navigate', (_e, navUrl) => {
     tab.url = navUrl;
-    history.unshift({ id: nextHistoryId++, url: navUrl, title: tab.title, timestamp: Date.now() });
+    tab.historyEntry = { id: nextHistoryId++, url: navUrl, title: '', timestamp: Date.now() };
+    history.unshift(tab.historyEntry);
     sendTabsUpdate();
   });
   view.webContents.on('did-navigate-in-page', (_e, navUrl) => {
