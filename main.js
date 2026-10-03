@@ -10,6 +10,8 @@ const BOOKMARKS_PRELOAD = path.join(__dirname, 'bookmarks-preload.js');
 const BOOKMARK_MENU_PRELOAD = path.join(__dirname, 'bookmark-menu-preload.js');
 const BOOKMARKS_FILE = path.join(app.getPath('userData'), 'bookmarks.json');
 const HISTORY_FILE = path.join(app.getPath('userData'), 'history.json');
+// Limite de entradas do histórico; as mais antigas são descartadas.
+const MAX_HISTORY_ENTRIES = 5000;
 
 // Altura da barra de UI (abas + endereço) em pixels.
 // As páginas web (BrowserView) começam abaixo dessa altura.
@@ -456,8 +458,14 @@ function createTab(url = 'https://duckduckgo.com') {
   });
   view.webContents.on('did-navigate', (_e, navUrl) => {
     tab.url = navUrl;
-    tab.historyEntry = { id: nextHistoryId++, url: navUrl, title: '', timestamp: Date.now() };
-    history.unshift(tab.historyEntry);
+    // Recarregar a mesma página não gera entrada nova: só atualiza a hora.
+    if (tab.historyEntry && tab.historyEntry.url === navUrl) {
+      tab.historyEntry.timestamp = Date.now();
+    } else {
+      tab.historyEntry = { id: nextHistoryId++, url: navUrl, title: '', timestamp: Date.now() };
+      history.unshift(tab.historyEntry);
+      if (history.length > MAX_HISTORY_ENTRIES) history.length = MAX_HISTORY_ENTRIES;
+    }
     saveHistory();
     sendTabsUpdate();
   });
