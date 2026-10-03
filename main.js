@@ -12,6 +12,10 @@ const BOOKMARK_MENU_PRELOAD = path.join(__dirname, 'bookmark-menu-preload.js');
 const BOOKMARKS_FILE = path.join(app.getPath('userData'), 'bookmarks.json');
 const HISTORY_DB_FILE = path.join(app.getPath('userData'), 'history.sqlite');
 const LEGACY_HISTORY_FILE = path.join(app.getPath('userData'), 'history.json');
+// Entradas mais antigas que isso são apagadas na inicialização e a cada dia.
+const HISTORY_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
+const HISTORY_PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+let historyPruneTimer = null;
 
 // Altura da barra de UI (abas + endereço) em pixels.
 // As páginas web (BrowserView) começam abaixo dessa altura.
@@ -793,10 +797,19 @@ app.whenReady().then(() => {
     // Arquivo antigo corrompido não deve impedir o app de abrir; ele fica intacto para análise.
     console.error('History import failed:', err);
   }
+  pruneHistory();
+  historyPruneTimer = setInterval(pruneHistory, HISTORY_PRUNE_INTERVAL_MS);
   createMainWindow();
 });
 
-app.on('will-quit', () => historyStore?.close());
+function pruneHistory() {
+  historyStore.prune(Date.now() - HISTORY_RETENTION_MS);
+}
+
+app.on('will-quit', () => {
+  clearInterval(historyPruneTimer);
+  historyStore?.close();
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
