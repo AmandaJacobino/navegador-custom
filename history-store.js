@@ -51,6 +51,11 @@ function openHistoryStore(file) {
       db.run('DELETE FROM visits');
     },
 
+    // Apaga entradas visitadas antes de olderThan (timestamp em ms). Devolve quantas saíram.
+    prune(olderThan) {
+      return db.run('DELETE FROM visits WHERE visited_at < ?', [olderThan]).changes;
+    },
+
     // Importa o histórico antigo em JSON ({ id, url, title, timestamp }) numa
     // única transação. Só renomeia o arquivo depois de gravar tudo, então uma
     // falha no meio não perde dados e a próxima inicialização tenta de novo.
