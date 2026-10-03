@@ -1,5 +1,6 @@
 const { app, BrowserWindow, BrowserView, ipcMain, Menu, shell, dialog, screen } = require('electron');
 const path = require('path');
+const { openHistoryStore } = require('./history-store');
 const { createOverlayPanel } = require('./overlay-panel');
 const fs = require('fs');
 
@@ -9,9 +10,8 @@ const PRINT_PRELOAD = path.join(__dirname, 'print-preload.js');
 const BOOKMARKS_PRELOAD = path.join(__dirname, 'bookmarks-preload.js');
 const BOOKMARK_MENU_PRELOAD = path.join(__dirname, 'bookmark-menu-preload.js');
 const BOOKMARKS_FILE = path.join(app.getPath('userData'), 'bookmarks.json');
-const HISTORY_FILE = path.join(app.getPath('userData'), 'history.json');
-// Limite de entradas do histórico; as mais antigas são descartadas.
-const MAX_HISTORY_ENTRIES = 5000;
+const HISTORY_DB_FILE = path.join(app.getPath('userData'), 'history.sqlite');
+const LEGACY_HISTORY_FILE = path.join(app.getPath('userData'), 'history.json');
 
 // Altura da barra de UI (abas + endereço) em pixels.
 // As páginas web (BrowserView) começam abaixo dessa altura.
@@ -27,8 +27,7 @@ let tabs = [];      // cada item: { id, view, title, url }
 let activeTabId = null;
 let previousTabId = null; // última aba ativa antes da atual, para Ctrl+Tab
 let nextTabId = 1;
-let history = [];   // { id, url, title, timestamp }
-let nextHistoryId = 1;
+let historyStore = null; // histórico de navegação em SQLite, aberto em whenReady
 let downloads = []; // { filename, path, url, state, startedAt }
 let bookmarks = []; // { id, url, title, createdAt }, persistido em BOOKMARKS_FILE
 let nextBookmarkId = 1;
@@ -264,28 +263,12 @@ function saveBookmarks() {
 // a hora da entrada atual; navegação dentro da página (SPA) conta como nova.
 function recordNavigation(tab, navUrl) {
   tab.url = navUrl;
+  const now = Date.now();
   if (tab.historyEntry && tab.historyEntry.url === navUrl) {
-    tab.historyEntry.timestamp = Date.now();
+    historyStore.touch(tab.historyEntry.id, now);
   } else {
-    tab.historyEntry = { id: nextHistoryId++, url: navUrl, title: '', timestamp: Date.now() };
-    history.unshift(tab.historyEntry);
-    if (history.length > MAX_HISTORY_ENTRIES) history.length = MAX_HISTORY_ENTRIES;
+    tab.historyEntry = { id: historyStore.add(navUrl, '', now), url: navUrl };
   }
-  saveHistory();
-}
-
-function loadHistory() {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf-8'));
-    history = Array.isArray(parsed) ? parsed : [];
-    nextHistoryId = history.reduce((max, h) => Math.max(max, h.id), 0) + 1;
-  } catch {
-    history = [];
-  }
-}
-
-function saveHistory() {
-  fs.writeFileSync(HISTORY_FILE, JSON.stringify(history));
 }
 
 function sendBookmarksUpdate() {
@@ -464,10 +447,7 @@ function createTab(url = 'https://duckduckgo.com') {
     tab.title = title;
     // O título real costuma chegar depois do did-navigate, então atualiza a
     // entrada de histórico da navegação atual também.
-    if (tab.historyEntry) {
-      tab.historyEntry.title = title;
-      saveHistory();
-    }
+    if (tab.historyEntry) historyStore.setTitle(tab.historyEntry.id, title);
     sendTabsUpdate();
   });
   view.webContents.on('did-navigate', (_e, navUrl) => {
@@ -556,18 +536,15 @@ function closeTab(id) {
 function filterHistory(range) {
   const now = Date.now();
   const startOfToday = new Date().setHours(0, 0, 0, 0);
-  if (range === 'yesterday') {
-    const startOfYesterday = startOfToday - 24 * 60 * 60 * 1000;
-    return history.filter((h) => h.timestamp >= startOfYesterday && h.timestamp < startOfToday);
-  }
+  const DAY = 24 * 60 * 60 * 1000;
+  if (range === 'yesterday') return historyStore.list(startOfToday - DAY, startOfToday);
   const rangeStarts = {
     today: startOfToday,
-    '7days': now - 7 * 24 * 60 * 60 * 1000,
-    '30days': now - 30 * 24 * 60 * 60 * 1000,
+    '7days': now - 7 * DAY,
+    '30days': now - 30 * DAY,
     all: 0,
   };
-  const since = rangeStarts[range] ?? startOfToday;
-  return history.filter((h) => h.timestamp >= since);
+  return historyStore.list(rangeStarts[range] ?? startOfToday);
 }
 
 // Atalhos de teclado (issue #6). Registrado tanto no webContents da janela
@@ -721,12 +698,10 @@ ipcMain.handle('nav:reload', () => {
 
 ipcMain.handle('history:get', (_e, range) => filterHistory(range));
 ipcMain.handle('history:delete', (_e, id) => {
-  history = history.filter((h) => h.id !== id);
-  saveHistory();
+  historyStore.remove(id);
 });
 ipcMain.handle('history:clear', () => {
-  history = [];
-  saveHistory();
+  historyStore.clear();
 });
 ipcMain.handle('downloads:get', () => downloads);
 ipcMain.handle('downloads:showInFolder', (_e, filePath) => shell.showItemInFolder(filePath));
@@ -811,9 +786,17 @@ app.whenReady().then(() => {
   // janela principal (index.html) e colidiria com o Ctrl+R de recarregar a aba.
   Menu.setApplicationMenu(null);
   loadBookmarks();
-  loadHistory();
+  historyStore = openHistoryStore(HISTORY_DB_FILE);
+  try {
+    historyStore.importLegacyJson(LEGACY_HISTORY_FILE);
+  } catch (err) {
+    // Arquivo antigo corrompido não deve impedir o app de abrir; ele fica intacto para análise.
+    console.error('History import failed:', err);
+  }
   createMainWindow();
 });
+
+app.on('will-quit', () => historyStore?.close());
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
