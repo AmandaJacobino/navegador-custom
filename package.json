@@ -13,5 +13,8 @@
   },
   "allowScripts": {
     "electron@31.7.7": true
+  },
+  "dependencies": {
+    "node-sqlite3-wasm": "0.8.60"
   }
 }
