@@ -6,10 +6,15 @@ function render(items) {
   empty.hidden = items.length > 0;
   items.forEach((entry) => {
     const li = document.createElement('li');
-    li.innerHTML = `
-      <span class="entry-filename" title="${entry.path}">${entry.filename}</span>
-      <span class="entry-state">${entry.state}</span>
-    `;
+    // textContent e não innerHTML: o nome do arquivo vem da página baixada.
+    const filename = document.createElement('span');
+    filename.className = 'entry-filename';
+    filename.title = entry.path;
+    filename.textContent = entry.filename;
+    const state = document.createElement('span');
+    state.className = 'entry-state';
+    state.textContent = entry.state;
+    li.append(filename, state);
     li.addEventListener('click', () => window.downloadsAPI.openInFolder(entry.path));
     list.appendChild(li);
   });

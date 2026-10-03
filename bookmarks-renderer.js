@@ -1,55 +1,11 @@
+// Escapa texto vindo do usuário ou de páginas antes de entrar em innerHTML.
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+}
+
 const tree = document.getElementById('tree');
 const empty = document.getElementById('empty');
-const closeManagerBtn = document.getElementById('btn-close-manager');
-const managerHeader = document.getElementById('manager-header');
-closeManagerBtn.addEventListener('click', () => window.bookmarksAPI.closeManager());
-
-// Arrasta o overlay pelo cabeçalho. A posição em si é aplicada pelo processo
-// principal via BrowserView.setBounds (só ele pode mover a view) enquanto
-// consulta a posição do cursor na tela — não dá pra confiar só em mousemove
-// dentro deste documento porque ele só existe dentro do retângulo da própria
-// view: o cursor sai da área e os eventos param de chegar aqui.
-managerHeader.addEventListener('mousedown', (e) => {
-  if (e.button !== 0 || e.target.closest('#btn-close-manager')) return;
-  window.bookmarksAPI.startManagerDrag();
-});
-document.addEventListener('mouseup', () => window.bookmarksAPI.endManagerDrag());
-
-// Redimensiona pelas bordas. Zona invisível de 6px; só o cursor muda.
-const RESIZE_ZONE = 6;
-const EDGE_CURSORS = {
-  n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize',
-  ne: 'nesw-resize', sw: 'nesw-resize', nw: 'nwse-resize', se: 'nwse-resize',
-};
-function edgeAt(x, y) {
-  const top = y < RESIZE_ZONE;
-  const bottom = y >= window.innerHeight - RESIZE_ZONE;
-  const left = x < RESIZE_ZONE;
-  const right = x >= window.innerWidth - RESIZE_ZONE;
-  const edge = (top ? 'n' : '') + (bottom ? 's' : '') + (left ? 'w' : '') + (right ? 'e' : '');
-  return edge || null;
-}
-// Destaca só os lados sob o cursor (accent), via variáveis CSS em bookmarks.html.
-function highlightEdge(edge) {
-  const style = document.documentElement.style;
-  for (const side of ['n', 's', 'e', 'w']) {
-    style.setProperty(`--hl-${side}`, edge && edge.includes(side) ? 'var(--accent)' : 'transparent');
-  }
-}
-document.addEventListener('mousemove', (e) => {
-  const edge = edgeAt(e.clientX, e.clientY);
-  document.documentElement.style.cursor = edge ? EDGE_CURSORS[edge] : '';
-  highlightEdge(edge);
-});
-document.addEventListener('mouseleave', () => {
-  document.documentElement.style.cursor = '';
-  highlightEdge(null);
-});
-document.addEventListener('mousedown', (e) => {
-  const edge = edgeAt(e.clientX, e.clientY);
-  if (!edge || e.button !== 0) return;
-  window.bookmarksAPI.startManagerResize(edge);
-});
+// Cabeçalho, fechar e redimensionar ficam em panel-frame.js.
 const newFolderBtn = document.getElementById('new-folder-btn');
 const newFolderRow = document.getElementById('new-folder-row');
 const confirmDeleteDialog = document.getElementById('confirm-delete-dialog');
@@ -159,7 +115,7 @@ function renderFolderPickerBase(panelId, triggerLabel, excludeIds, onSelect) {
   wrapper.className = 'folder-picker';
   wrapper.innerHTML = `
     <button type="button" class="folder-picker-trigger" popovertarget="${panelId}" popovertargetaction="toggle" title="Mover para pasta">
-      <span class="current">${triggerLabel}</span>
+      <span class="current">${escapeHtml(triggerLabel)}</span>
       <span class="chevron">▾</span>
     </button>
     <div id="${panelId}" class="folder-picker-panel" popover="auto"></div>
@@ -170,7 +126,7 @@ function renderFolderPickerBase(panelId, triggerLabel, excludeIds, onSelect) {
   const folders = items.filter((b) => b.type === 'folder' && !excludeIds.has(b.id));
   const options = [{ id: '', title: 'Raiz' }, ...folders];
   panel.innerHTML = options
-    .map((f) => `<button type="button" class="folder-option" data-value="${f.id}">${f.title}</button>`)
+    .map((f) => `<button type="button" class="folder-option" data-value="${f.id}">${escapeHtml(f.title)}</button>`)
     .join('');
 
   panel.addEventListener('toggle', (e) => {
@@ -330,14 +286,14 @@ function renderBookmarkRow(entry) {
   li.innerHTML = `
     <div class="row bookmark-row">
       <div class="row-main">
-        <input type="checkbox" class="select-checkbox" aria-label="Selecionar ${entry.title || entry.url}" />
+        <input type="checkbox" class="select-checkbox" aria-label="Selecionar ${escapeHtml(entry.title || entry.url)}" />
         <span class="bookmark-dot">●</span>
-        <span class="entry-title" title="Renomear">${entry.title || entry.url}</span>
+        <span class="entry-title" title="Renomear">${escapeHtml(entry.title || entry.url)}</span>
         <button class="speeddial-toggle ${entry.speedDial ? 'active' : ''}" title="Tela inicial">★</button>
         <span class="move-slot"></span>
         <button class="delete-btn" title="Remover">✕</button>
       </div>
-      <span class="entry-url">${entry.url}</span>
+      <span class="entry-url">${escapeHtml(entry.url)}</span>
     </div>
   `;
   const row = li.querySelector('.row');
@@ -477,7 +433,7 @@ function renderFolderNode(folder, depth = 0) {
   const isCollapsed = collapsedFolders.has(folder.id);
   li.innerHTML = `
     <div class="row folder-row" data-drop-folder-id="${folder.id}">
-      <input type="checkbox" class="select-checkbox" aria-label="Selecionar pasta ${folder.title}" />
+      <input type="checkbox" class="select-checkbox" aria-label="Selecionar pasta ${escapeHtml(folder.title)}" />
       <button
         type="button"
         class="folder-toggle"
@@ -485,7 +441,7 @@ function renderFolderNode(folder, depth = 0) {
         aria-controls="${childrenId}"
         aria-label="${isCollapsed ? 'Expandir pasta' : 'Recolher pasta'}"
       ><span class="chevron-icon" aria-hidden="true">▸</span></button>
-      <span class="folder-title" title="Renomear">${folder.title}</span>
+      <span class="folder-title" title="Renomear">${escapeHtml(folder.title)}</span>
       <span class="folder-count">${count}</span>
       <span class="move-slot"></span>
       <button class="add-sub-btn" title="Nova subpasta">+</button>

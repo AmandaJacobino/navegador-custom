@@ -1,5 +1,7 @@
 const { app, BrowserWindow, BrowserView, ipcMain, Menu, shell, dialog, screen } = require('electron');
 const path = require('path');
+const { openHistoryStore } = require('./history-store');
+const { createOverlayPanel } = require('./overlay-panel');
 const fs = require('fs');
 
 const HISTORY_PRELOAD = path.join(__dirname, 'history-preload.js');
@@ -8,21 +10,19 @@ const PRINT_PRELOAD = path.join(__dirname, 'print-preload.js');
 const BOOKMARKS_PRELOAD = path.join(__dirname, 'bookmarks-preload.js');
 const BOOKMARK_MENU_PRELOAD = path.join(__dirname, 'bookmark-menu-preload.js');
 const BOOKMARKS_FILE = path.join(app.getPath('userData'), 'bookmarks.json');
+const HISTORY_DB_FILE = path.join(app.getPath('userData'), 'history.sqlite');
+const LEGACY_HISTORY_FILE = path.join(app.getPath('userData'), 'history.json');
+// Entradas mais antigas que isso são apagadas na inicialização e a cada dia.
+const HISTORY_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
+const HISTORY_PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+let historyPruneTimer = null;
 
 // Altura da barra de UI (abas + endereço) em pixels.
 // As páginas web (BrowserView) começam abaixo dessa altura.
 const UI_HEIGHT = 84;
 
 let mainWindow;
-let historyWindow = null;   // janela independente de histórico (Ctrl+H)
 let downloadsWindow = null; // janela independente de downloads (Ctrl+D)
-let bookmarksManagerView = null; // overlay de gerenciamento de favoritos (Ctrl+B)
-let bookmarksManagerOpen = false;
-let bookmarksManagerMoved = false; // já foi arrastado manualmente? não recentralizar mais
-let bookmarksManagerDragging = false;
-let bookmarksManagerDragStartCursor = null;
-let bookmarksManagerDragStartBounds = null;
-let bookmarksManagerDragInterval = null;
 let bookmarkMenuView = null; // BrowserView de overlay do dropdown da estrela
 let bookmarkMenuOpen = false;
 let printWindow = null;     // janela independente de impressão (Ctrl+P)
@@ -31,8 +31,7 @@ let tabs = [];      // cada item: { id, view, title, url }
 let activeTabId = null;
 let previousTabId = null; // última aba ativa antes da atual, para Ctrl+Tab
 let nextTabId = 1;
-let history = [];   // { id, url, title, timestamp }
-let nextHistoryId = 1;
+let historyStore = null; // histórico de navegação em SQLite, aberto em whenReady
 let downloads = []; // { filename, path, url, state, startedAt }
 let bookmarks = []; // { id, url, title, createdAt }, persistido em BOOKMARKS_FILE
 let nextBookmarkId = 1;
@@ -89,26 +88,19 @@ function closeOnCtrlW(win) {
   });
 }
 
-// Janela independente de histórico (issue #6, Ctrl+H).
-function openHistoryWindow() {
-  if (historyWindow && !historyWindow.isDestroyed()) {
-    historyWindow.focus();
-    return;
-  }
-  historyWindow = new BrowserWindow({
-    width: 480,
-    height: 600,
-    title: 'Histórico',
-    webPreferences: {
-      preload: HISTORY_PRELOAD,
-      contextIsolation: true,
-      sandbox: true,
-    },
-  });
-  historyWindow.setMenuBarVisibility(false);
-  historyWindow.loadFile('history.html');
-  closeOnCtrlW(historyWindow);
-  historyWindow.on('closed', () => { historyWindow = null; });
+// Histórico (issue #10, Ctrl+H) como painel overlay, igual ao gerenciador de
+// favoritos. Abrir um painel fecha o outro.
+const historyPanel = createOverlayPanel({
+  getWindow: () => mainWindow,
+  getUiHeight: () => UI_HEIGHT,
+  preload: HISTORY_PRELOAD,
+  page: 'history.html',
+  defaultSize: (content, uiHeight) => ({ width: 480, height: Math.min(600, Math.max(200, content.height - uiHeight - 32)) }),
+});
+
+function openHistoryPanel() {
+  bookmarksPanel.close();
+  historyPanel.open();
 }
 
 // Janela independente de downloads (issue #6, Ctrl+D). Separada da janela
@@ -134,152 +126,28 @@ function openDownloadsWindow() {
   downloadsWindow.on('closed', () => { downloadsWindow = null; });
 }
 
-// Gerenciador de favoritos (issue #9, Ctrl+B) como overlay preso à janela
-// principal, no mesmo esquema do dropdown da estrela — assim ele nunca fica
-// "perdido" atrás de outra janela quando o foco sai e volta pro navegador,
-// já que não existe enquanto BrowserWindow independente pro SO gerenciar.
-function ensureBookmarksManagerView() {
-  if (bookmarksManagerView) return bookmarksManagerView;
-  bookmarksManagerView = new BrowserView({
-    webPreferences: {
-      preload: BOOKMARKS_PRELOAD,
-      contextIsolation: true,
-      sandbox: true,
-    },
-  });
-  bookmarksManagerView.webContents.loadFile('bookmarks.html');
-  bookmarksManagerView.webContents.on('before-input-event', (event, input) => {
-    if (input.type !== 'keyDown') return;
-    if (input.control && input.key.toLowerCase() === 'w') {
+// Gerenciador de favoritos (issue #9, Ctrl+B) como painel overlay preso à
+// janela principal, no mesmo esquema do dropdown da estrela.
+const bookmarksPanel = createOverlayPanel({
+  getWindow: () => mainWindow,
+  getUiHeight: () => UI_HEIGHT,
+  preload: BOOKMARKS_PRELOAD,
+  page: 'bookmarks.html',
+  defaultSize: (content, uiHeight) => ({ width: 480, height: Math.min(600, Math.max(200, content.height - uiHeight - 32)) }),
+  onKeyDown: (event, input, view) => {
+    if (input.control && input.key.toLowerCase() === 'n') {
       event.preventDefault();
-      closeBookmarksManager();
-    } else if (input.control && input.key.toLowerCase() === 'n') {
-      event.preventDefault();
-      bookmarksManagerView.webContents.send('bookmarks:new-folder-shortcut');
+      view.webContents.send('bookmarks:new-folder-shortcut');
     }
-  });
-  return bookmarksManagerView;
-}
-
-function layoutBookmarksManager() {
-  if (!bookmarksManagerOpen || !mainWindow) return;
-  const contentBounds = mainWindow.getContentBounds();
-  if (!bookmarksManagerMoved) {
-    const width = 480;
-    const height = Math.min(600, Math.max(200, contentBounds.height - UI_HEIGHT - 32));
-    const x = Math.max(0, Math.round((contentBounds.width - width) / 2));
-    const y = UI_HEIGHT + Math.max(0, Math.round((contentBounds.height - UI_HEIGHT - height) / 2));
-    bookmarksManagerView.setBounds({ x, y, width, height });
-    return;
-  }
-  // Já foi arrastado pelo usuário: não recentraliza mais, só reencaixa
-  // dentro da janela se o redimensionamento deixou a view total ou
-  // parcialmente pra fora.
-  const current = bookmarksManagerView.getBounds();
-  const x = Math.min(Math.max(current.x, 0), Math.max(0, contentBounds.width - current.width));
-  const y = Math.min(Math.max(current.y, UI_HEIGHT), Math.max(UI_HEIGHT, contentBounds.height - current.height));
-  if (x !== current.x || y !== current.y) bookmarksManagerView.setBounds({ ...current, x, y });
-}
+  },
+});
 
 function openBookmarksManager() {
-  const view = ensureBookmarksManagerView();
-  if (!bookmarksManagerOpen) {
-    mainWindow.addBrowserView(view);
-    bookmarksManagerOpen = true;
-    layoutBookmarksManager();
-  }
-  view.webContents.focus();
+  historyPanel.close();
+  bookmarksPanel.open();
 }
 
-function closeBookmarksManager() {
-  if (!bookmarksManagerOpen || !mainWindow) return;
-  stopBookmarksManagerDrag();
-  bookmarksManagerOpen = false;
-  mainWindow.removeBrowserView(bookmarksManagerView);
-}
-
-// Arrastar o overlay pelo cabeçalho: a BrowserView não é uma janela do SO,
-// então não existe "-webkit-app-region: drag" pra ela. Em vez de depender
-// de mousemove dentro do próprio documento (que para de chegar assim que o
-// cursor sai do retângulo da view), o processo principal consulta a posição
-// absoluta do cursor na tela periodicamente — funciona mesmo se o arraste
-// sair da área da view.
-function startBookmarksManagerDrag() {
-  if (!bookmarksManagerOpen || bookmarksManagerDragging) return;
-  bookmarksManagerDragging = true;
-  bookmarksManagerMoved = true;
-  bookmarksManagerDragStartCursor = screen.getCursorScreenPoint();
-  bookmarksManagerDragStartBounds = bookmarksManagerView.getBounds();
-  bookmarksManagerDragInterval = setInterval(() => {
-    if (!bookmarksManagerDragging || !mainWindow) return;
-    const cursor = screen.getCursorScreenPoint();
-    const dx = cursor.x - bookmarksManagerDragStartCursor.x;
-    const dy = cursor.y - bookmarksManagerDragStartCursor.y;
-    const { width, height } = bookmarksManagerDragStartBounds;
-    const contentBounds = mainWindow.getContentBounds();
-    const x = Math.min(Math.max(bookmarksManagerDragStartBounds.x + dx, 0), Math.max(0, contentBounds.width - width));
-    const y = Math.min(Math.max(bookmarksManagerDragStartBounds.y + dy, UI_HEIGHT), Math.max(UI_HEIGHT, contentBounds.height - height));
-    bookmarksManagerView.setBounds({ x: Math.round(x), y: Math.round(y), width, height });
-  }, 16);
-}
-
-function stopBookmarksManagerDrag() {
-  stopBookmarksManagerResize();
-  if (!bookmarksManagerDragging) return;
-  bookmarksManagerDragging = false;
-  clearInterval(bookmarksManagerDragInterval);
-  bookmarksManagerDragInterval = null;
-}
-
-// Redimensionar pelas bordas segue o mesmo modelo do arraste: o processo
-// principal acompanha o cursor na tela. Cada borda mexe só nos lados que
-// ela toca (ex.: 'nw' move topo e esquerda), respeitando tamanho mínimo e
-// os limites da janela principal.
-const MANAGER_MIN_WIDTH = 320;
-const MANAGER_MIN_HEIGHT = 200;
-const MANAGER_RESIZE_EDGES = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
-let bookmarksManagerResize = null;
-
-function startBookmarksManagerResize(edge) {
-  if (!bookmarksManagerOpen || bookmarksManagerDragging || bookmarksManagerResize) return;
-  if (!MANAGER_RESIZE_EDGES.includes(edge)) return;
-  bookmarksManagerMoved = true;
-  bookmarksManagerResize = {
-    edge,
-    cursor: screen.getCursorScreenPoint(),
-    bounds: bookmarksManagerView.getBounds(),
-    interval: setInterval(applyBookmarksManagerResize, 16),
-  };
-}
-
-function applyBookmarksManagerResize() {
-  if (!bookmarksManagerResize || !mainWindow) return;
-  const { edge, cursor, bounds } = bookmarksManagerResize;
-  const now = screen.getCursorScreenPoint();
-  const dx = now.x - cursor.x;
-  const dy = now.y - cursor.y;
-  const content = mainWindow.getContentBounds();
-  let left = bounds.x;
-  let top = bounds.y;
-  let right = bounds.x + bounds.width;
-  let bottom = bounds.y + bounds.height;
-  if (edge.includes('w')) left = Math.min(Math.max(bounds.x + dx, 0), right - MANAGER_MIN_WIDTH);
-  if (edge.includes('e')) right = Math.min(Math.max(right + dx, left + MANAGER_MIN_WIDTH), content.width);
-  if (edge.includes('n')) top = Math.min(Math.max(bounds.y + dy, UI_HEIGHT), bottom - MANAGER_MIN_HEIGHT);
-  if (edge.includes('s')) bottom = Math.min(Math.max(bottom + dy, top + MANAGER_MIN_HEIGHT), content.height);
-  bookmarksManagerView.setBounds({
-    x: Math.round(left),
-    y: Math.round(top),
-    width: Math.round(right - left),
-    height: Math.round(bottom - top),
-  });
-}
-
-function stopBookmarksManagerResize() {
-  if (!bookmarksManagerResize) return;
-  clearInterval(bookmarksManagerResize.interval);
-  bookmarksManagerResize = null;
-}
+const PANELS = { bookmarks: bookmarksPanel, history: historyPanel };
 
 const BOOKMARK_MENU_WIDTH = 220;
 
@@ -395,9 +263,21 @@ function saveBookmarks() {
   fs.writeFileSync(BOOKMARKS_FILE, JSON.stringify(bookmarks, null, 2));
 }
 
+// Registra uma navegação no histórico. Recarregar a mesma página só atualiza
+// a hora da entrada atual; navegação dentro da página (SPA) conta como nova.
+function recordNavigation(tab, navUrl) {
+  tab.url = navUrl;
+  const now = Date.now();
+  if (tab.historyEntry && tab.historyEntry.url === navUrl) {
+    historyStore.touch(tab.historyEntry.id, now);
+  } else {
+    tab.historyEntry = { id: historyStore.add(navUrl, '', now), url: navUrl };
+  }
+}
+
 function sendBookmarksUpdate() {
-  if (bookmarksManagerOpen) {
-    bookmarksManagerView.webContents.send('bookmarks:update', bookmarks);
+  if (bookmarksPanel.isOpen()) {
+    bookmarksPanel.getView().webContents.send('bookmarks:update', bookmarks);
   }
 }
 
@@ -569,15 +449,17 @@ function createTab(url = 'https://duckduckgo.com') {
 
   view.webContents.on('page-title-updated', (_e, title) => {
     tab.title = title;
+    // O título real costuma chegar depois do did-navigate, então atualiza a
+    // entrada de histórico da navegação atual também.
+    if (tab.historyEntry) historyStore.setTitle(tab.historyEntry.id, title);
     sendTabsUpdate();
   });
   view.webContents.on('did-navigate', (_e, navUrl) => {
-    tab.url = navUrl;
-    history.unshift({ id: nextHistoryId++, url: navUrl, title: tab.title, timestamp: Date.now() });
+    recordNavigation(tab, navUrl);
     sendTabsUpdate();
   });
   view.webContents.on('did-navigate-in-page', (_e, navUrl) => {
-    tab.url = navUrl;
+    recordNavigation(tab, navUrl);
     sendTabsUpdate();
   });
   view.webContents.on('before-input-event', (event, input) => {
@@ -627,7 +509,8 @@ function activateTab(id) {
   // setBrowserView troca TODAS as views da janela — se o gerenciador de
   // favoritos estiver aberto, precisa voltar por cima da nova aba, senão
   // trocar de aba com ele aberto o fecharia sem querer.
-  if (bookmarksManagerOpen) mainWindow.addBrowserView(bookmarksManagerView);
+  bookmarksPanel.reattach();
+  historyPanel.reattach();
   layoutActiveView();
   // Trocar o BrowserView não move o foco de teclado sozinho — sem isso, os
   // atalhos só voltam a funcionar depois de um clique manual na aba.
@@ -657,18 +540,15 @@ function closeTab(id) {
 function filterHistory(range) {
   const now = Date.now();
   const startOfToday = new Date().setHours(0, 0, 0, 0);
-  if (range === 'yesterday') {
-    const startOfYesterday = startOfToday - 24 * 60 * 60 * 1000;
-    return history.filter((h) => h.timestamp >= startOfYesterday && h.timestamp < startOfToday);
-  }
+  const DAY = 24 * 60 * 60 * 1000;
+  if (range === 'yesterday') return historyStore.list(startOfToday - DAY, startOfToday);
   const rangeStarts = {
     today: startOfToday,
-    '7days': now - 7 * 24 * 60 * 60 * 1000,
-    '30days': now - 30 * 24 * 60 * 60 * 1000,
+    '7days': now - 7 * DAY,
+    '30days': now - 30 * DAY,
     all: 0,
   };
-  const since = rangeStarts[range] ?? startOfToday;
-  return history.filter((h) => h.timestamp >= since);
+  return historyStore.list(rangeStarts[range] ?? startOfToday);
 }
 
 // Atalhos de teclado (issue #6). Registrado tanto no webContents da janela
@@ -692,7 +572,7 @@ function handleShortcut(input) {
     return true;
   }
   if ((ctrl && key === 'r') || key === 'f5') { if (tab) tab.view.webContents.reload(); return true; }
-  if (ctrl && key === 'h') { openHistoryWindow(); return true; }
+  if (ctrl && key === 'h') { openHistoryPanel(); return true; }
   if (ctrl && key === 'd') { openDownloadsWindow(); return true; }
   if (ctrl && key === 'b') { openBookmarksManager(); return true; }
   if (ctrl && key === 'f') { mainWindow.webContents.send('ui:toggle-findbar'); return true; }
@@ -754,8 +634,11 @@ function createMainWindow() {
   mainWindow.loadFile('index.html');
   mainWindow.on('resize', layoutActiveView);
   mainWindow.on('resize', closeBookmarkMenu);
-  mainWindow.on('resize', layoutBookmarksManager);
-  mainWindow.on('blur', stopBookmarksManagerDrag);
+  mainWindow.on('resize', () => {
+    bookmarksPanel.layout();
+    historyPanel.layout();
+  });
+  mainWindow.on('blur', () => Object.values(PANELS).forEach((p) => p.stopInteraction()));
 
   mainWindow.webContents.on('before-input-event', (event, input) => {
     if (handleShortcut(input)) event.preventDefault();
@@ -819,10 +702,10 @@ ipcMain.handle('nav:reload', () => {
 
 ipcMain.handle('history:get', (_e, range) => filterHistory(range));
 ipcMain.handle('history:delete', (_e, id) => {
-  history = history.filter((h) => h.id !== id);
+  historyStore.remove(id);
 });
 ipcMain.handle('history:clear', () => {
-  history = [];
+  historyStore.clear();
 });
 ipcMain.handle('downloads:get', () => downloads);
 ipcMain.handle('downloads:showInFolder', (_e, filePath) => shell.showItemInFolder(filePath));
@@ -838,10 +721,10 @@ ipcMain.handle('bookmarks:toggleSpeedDialCurrent', () => {
   if (tab) toggleSpeedDial(tab);
 });
 ipcMain.handle('bookmarks:openManage', () => openBookmarksManager());
-ipcMain.handle('bookmarks:closeManager', () => closeBookmarksManager());
-ipcMain.handle('bookmarks:managerDragStart', () => startBookmarksManagerDrag());
-ipcMain.handle('bookmarks:managerDragEnd', () => stopBookmarksManagerDrag());
-ipcMain.handle('bookmarks:managerResizeStart', (_e, edge) => startBookmarksManagerResize(edge));
+ipcMain.handle('panel:close', (_e, name) => PANELS[name]?.close());
+ipcMain.handle('panel:dragStart', (_e, name) => PANELS[name]?.startDrag());
+ipcMain.handle('panel:resizeStart', (_e, name, edge) => PANELS[name]?.startResize(edge));
+ipcMain.handle('panel:dragEnd', () => Object.values(PANELS).forEach((p) => p.stopInteraction()));
 ipcMain.handle('bookmarks:openMenu', (_e, anchorRect) => openBookmarkMenu(anchorRect));
 ipcMain.handle('bookmarks:closeMenu', () => closeBookmarkMenu());
 ipcMain.handle('bookmarks:get', () => bookmarks);
@@ -907,7 +790,25 @@ app.whenReady().then(() => {
   // janela principal (index.html) e colidiria com o Ctrl+R de recarregar a aba.
   Menu.setApplicationMenu(null);
   loadBookmarks();
+  historyStore = openHistoryStore(HISTORY_DB_FILE);
+  try {
+    historyStore.importLegacyJson(LEGACY_HISTORY_FILE);
+  } catch (err) {
+    // Arquivo antigo corrompido não deve impedir o app de abrir; ele fica intacto para análise.
+    console.error('History import failed:', err);
+  }
+  pruneHistory();
+  historyPruneTimer = setInterval(pruneHistory, HISTORY_PRUNE_INTERVAL_MS);
   createMainWindow();
+});
+
+function pruneHistory() {
+  historyStore.prune(Date.now() - HISTORY_RETENTION_MS);
+}
+
+app.on('will-quit', () => {
+  clearInterval(historyPruneTimer);
+  historyStore?.close();
 });
 
 app.on('window-all-closed', () => {
