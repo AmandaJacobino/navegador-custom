@@ -114,11 +114,15 @@ newTabBtn.addEventListener('click', () => window.browserAPI.newTab());
 btnBack.addEventListener('click', () => window.browserAPI.back());
 btnForward.addEventListener('click', () => window.browserAPI.forward());
 btnReload.addEventListener('click', () => window.browserAPI.reload());
-// O dropdown em si é renderizado numa BrowserView de overlay (ver
-// openBookmarkMenu em main.js), empilhada por cima da página ativa — só
-// assim ele aparece por cima do conteúdo em vez de atrás ou empurrando-o,
-// já que a página é uma camada nativa separada do HTML desta janela.
+// Primeiro clique adiciona a página aos favoritos; com ela já favoritada, o
+// clique abre o dropdown (ver openBookmarkMenu em main.js), empilhado por
+// cima da página ativa como BrowserView de overlay.
 btnBookmark.addEventListener('click', () => {
+  const active = currentState.tabs.find((t) => t.id === currentState.activeTabId);
+  if (!active?.bookmarked) {
+    window.browserAPI.toggleBookmark();
+    return;
+  }
   const rect = btnBookmark.getBoundingClientRect();
   window.browserAPI.openBookmarkMenu({
     left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom,
