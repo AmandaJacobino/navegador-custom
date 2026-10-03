@@ -3,101 +3,113 @@
 <head>
 <meta charset="UTF-8">
 <title>Histórico</title>
+<link rel="stylesheet" href="panel-frame.css">
 <style>
-  :root {
-    --bg: #1e1f22;
-    --bg-elevated: #2b2d31;
-    --text: #e3e3e3;
-    --text-muted: #9a9a9a;
-    --accent: #4c8bf5;
-    --border: #3a3c40;
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--text);
-    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
-  }
-  h1 {
-    font-size: 18px;
-    padding: 16px 20px 0 20px;
-    margin: 0;
-  }
-  #filters {
+  #panel-header { margin-bottom: 12px; }
+  #toolbar {
     display: flex;
+    flex-wrap: wrap;
     gap: 8px;
-    padding: 12px 20px;
+    padding: 0 20px 12px 20px;
+    align-items: center;
   }
-  #filters button {
-    background: var(--bg-elevated);
+  #search {
+    flex-basis: 100%;
+    background: var(--surface);
     border: 1px solid var(--border);
-    color: var(--text-muted);
+    color: var(--ink);
+    border-radius: 6px;
+    padding: 7px 10px;
+    font-size: 13px;
+    font-family: inherit;
+    outline: none;
+    user-select: text;
+  }
+  #search:focus { border-color: var(--accent); }
+  #filters { display: flex; flex-wrap: wrap; gap: 6px; flex: 1; }
+  #filters button, #clear-all {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--muted);
     border-radius: 20px;
-    padding: 6px 14px;
+    padding: 5px 12px;
     font-size: 12px;
     cursor: pointer;
+    font-family: inherit;
   }
-  #filters button:hover { color: var(--text); }
+  #filters button:hover, #clear-all:hover, #filters button:focus-visible, #clear-all:focus-visible {
+    background: var(--surface-hover);
+    color: var(--ink);
+  }
   #filters button.active {
-    background: var(--accent);
-    color: white;
+    background: var(--accent-soft);
     border-color: var(--accent);
-  }
-  #clear-all {
-    margin-left: auto;
+    color: var(--ink);
   }
   #list {
     list-style: none;
     margin: 0;
-    padding: 0 20px;
+    padding: 0 20px 12px 20px;
   }
   #list li {
-    padding: 10px 8px;
+    padding: 8px;
     border-bottom: 1px solid var(--border);
     cursor: pointer;
     display: flex;
     align-items: center;
-    justify-content: space-between;
     gap: 12px;
   }
-  #list li:hover { background: rgba(255,255,255,0.05); }
-  #list .entry-title {
+  #list li:hover { background: var(--surface-hover); }
+  #list .entry-main {
     flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  #list .entry-title {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  #list .entry-time {
-    color: var(--text-muted);
-    font-size: 12px;
-    flex-shrink: 0;
+  #list .entry-url, #list .entry-time {
+    color: var(--muted);
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   #list .entry-delete {
-    color: var(--text-muted);
+    color: var(--muted);
     flex-shrink: 0;
     padding: 0 4px;
   }
-  #list .entry-delete:hover { color: var(--text); }
+  #list .entry-delete:hover { color: var(--ink); }
   #empty {
     padding: 40px 20px;
-    color: var(--text-muted);
+    color: var(--muted);
     text-align: center;
   }
 </style>
 </head>
 <body>
-  <h1>Histórico</h1>
-  <div id="filters">
-    <button data-range="today" class="active">Hoje</button>
-    <button data-range="yesterday">Ontem</button>
-    <button data-range="7days">Últimos 7 dias</button>
-    <button data-range="30days">Últimos 30 dias</button>
-    <button data-range="all">Tudo</button>
+  <div id="panel-header">
+    <h1>Histórico</h1>
+    <button type="button" id="panel-close" title="Fechar (Ctrl+W)">✕</button>
+  </div>
+  <div id="toolbar">
+    <input id="search" type="search" placeholder="Buscar por título ou URL" autocomplete="off">
+    <div id="filters">
+      <button data-range="today" class="active">Hoje</button>
+      <button data-range="yesterday">Ontem</button>
+      <button data-range="7days">7 dias</button>
+      <button data-range="30days">30 dias</button>
+      <button data-range="all">Tudo</button>
+    </div>
     <button id="clear-all">Limpar tudo</button>
   </div>
   <ul id="list"></ul>
-  <div id="empty" hidden>Nenhum item no período selecionado.</div>
+  <div id="empty" hidden>Nenhum item encontrado.</div>
+  <script src="panel-frame.js"></script>
   <script src="history-renderer.js"></script>
 </body>
 </html>

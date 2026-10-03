@@ -9,3 +9,11 @@ contextBridge.exposeInMainWorld('historyAPI', {
   deleteEntry: (id) => ipcRenderer.invoke('history:delete', id),
   clearAll: () => ipcRenderer.invoke('history:clear'),
 });
+
+// Cabeçalho que arrasta e bordas que redimensionam o painel (ver panel-frame.js).
+contextBridge.exposeInMainWorld("panelAPI", {
+  close: () => ipcRenderer.invoke("panel:close", "history"),
+  startDrag: () => ipcRenderer.invoke("panel:dragStart", "history"),
+  endDrag: () => ipcRenderer.invoke("panel:dragEnd"),
+  startResize: (edge) => ipcRenderer.invoke("panel:resizeStart", "history", edge),
+});

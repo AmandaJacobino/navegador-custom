@@ -13,8 +13,12 @@ contextBridge.exposeInMainWorld('bookmarksAPI', {
   toggleSpeedDial: (id) => ipcRenderer.invoke('bookmarks:toggleSpeedDial', id),
   onUpdate: (callback) => ipcRenderer.on('bookmarks:update', (_e, data) => callback(data)),
   onNewFolderShortcut: (callback) => ipcRenderer.on('bookmarks:new-folder-shortcut', callback),
-  closeManager: () => ipcRenderer.invoke('bookmarks:closeManager'),
-  startManagerDrag: () => ipcRenderer.invoke('bookmarks:managerDragStart'),
-  endManagerDrag: () => ipcRenderer.invoke('bookmarks:managerDragEnd'),
-  startManagerResize: (edge) => ipcRenderer.invoke('bookmarks:managerResizeStart', edge),
+});
+
+// Cabeçalho que arrasta e bordas que redimensionam o painel (ver panel-frame.js).
+contextBridge.exposeInMainWorld('panelAPI', {
+  close: () => ipcRenderer.invoke('panel:close', 'bookmarks'),
+  startDrag: () => ipcRenderer.invoke('panel:dragStart', 'bookmarks'),
+  endDrag: () => ipcRenderer.invoke('panel:dragEnd'),
+  startResize: (edge) => ipcRenderer.invoke('panel:resizeStart', 'bookmarks', edge),
 });

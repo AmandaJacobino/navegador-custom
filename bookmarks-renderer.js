@@ -1,55 +1,6 @@
 const tree = document.getElementById('tree');
 const empty = document.getElementById('empty');
-const closeManagerBtn = document.getElementById('btn-close-manager');
-const managerHeader = document.getElementById('manager-header');
-closeManagerBtn.addEventListener('click', () => window.bookmarksAPI.closeManager());
-
-// Arrasta o overlay pelo cabeçalho. A posição em si é aplicada pelo processo
-// principal via BrowserView.setBounds (só ele pode mover a view) enquanto
-// consulta a posição do cursor na tela — não dá pra confiar só em mousemove
-// dentro deste documento porque ele só existe dentro do retângulo da própria
-// view: o cursor sai da área e os eventos param de chegar aqui.
-managerHeader.addEventListener('mousedown', (e) => {
-  if (e.button !== 0 || e.target.closest('#btn-close-manager')) return;
-  window.bookmarksAPI.startManagerDrag();
-});
-document.addEventListener('mouseup', () => window.bookmarksAPI.endManagerDrag());
-
-// Redimensiona pelas bordas. Zona invisível de 6px; só o cursor muda.
-const RESIZE_ZONE = 6;
-const EDGE_CURSORS = {
-  n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize',
-  ne: 'nesw-resize', sw: 'nesw-resize', nw: 'nwse-resize', se: 'nwse-resize',
-};
-function edgeAt(x, y) {
-  const top = y < RESIZE_ZONE;
-  const bottom = y >= window.innerHeight - RESIZE_ZONE;
-  const left = x < RESIZE_ZONE;
-  const right = x >= window.innerWidth - RESIZE_ZONE;
-  const edge = (top ? 'n' : '') + (bottom ? 's' : '') + (left ? 'w' : '') + (right ? 'e' : '');
-  return edge || null;
-}
-// Destaca só os lados sob o cursor (accent), via variáveis CSS em bookmarks.html.
-function highlightEdge(edge) {
-  const style = document.documentElement.style;
-  for (const side of ['n', 's', 'e', 'w']) {
-    style.setProperty(`--hl-${side}`, edge && edge.includes(side) ? 'var(--accent)' : 'transparent');
-  }
-}
-document.addEventListener('mousemove', (e) => {
-  const edge = edgeAt(e.clientX, e.clientY);
-  document.documentElement.style.cursor = edge ? EDGE_CURSORS[edge] : '';
-  highlightEdge(edge);
-});
-document.addEventListener('mouseleave', () => {
-  document.documentElement.style.cursor = '';
-  highlightEdge(null);
-});
-document.addEventListener('mousedown', (e) => {
-  const edge = edgeAt(e.clientX, e.clientY);
-  if (!edge || e.button !== 0) return;
-  window.bookmarksAPI.startManagerResize(edge);
-});
+// Cabeçalho, fechar e redimensionar ficam em panel-frame.js.
 const newFolderBtn = document.getElementById('new-folder-btn');
 const newFolderRow = document.getElementById('new-folder-row');
 const confirmDeleteDialog = document.getElementById('confirm-delete-dialog');

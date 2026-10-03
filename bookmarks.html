@@ -3,72 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <title>Favoritos</title>
+<link rel="stylesheet" href="panel-frame.css">
 <style>
-  :root {
-    --bg: #131316;
-    --surface: #1c1c1f;
-    --surface-hover: #232327;
-    --ink: #e8e8ea;
-    --muted: #8b8b93;
-    --accent: #7c5cff;
-    --accent-soft: rgba(124, 92, 255, 0.16);
-    --border: #29292e;
-  }
-  * { box-sizing: border-box; }
-  /* Contorno pra separar o overlay do conteúdo da página atrás dele — sem
-     isso os dois fundos escuros se confundem. Na tag html (não no body,
-     que só cresce até a altura do conteúdo) pra ficar sempre colado nas
-     bordas reais do retângulo da BrowserView, do tamanho exato dela. */
-  /* Lados de redimensionamento: cada --hl-* vira accent quando o cursor
-     está na zona daquela borda (ver bookmarks-renderer.js). */
-  html {
-    --hl-n: transparent;
-    --hl-s: transparent;
-    --hl-e: transparent;
-    --hl-w: transparent;
-    height: 100%;
-    border: 1px solid var(--border);
-    box-shadow:
-      inset 0 2px 0 var(--hl-n),
-      inset 0 -2px 0 var(--hl-s),
-      inset -2px 0 0 var(--hl-e),
-      inset 2px 0 0 var(--hl-w),
-      0 16px 40px rgba(0, 0, 0, 0.55);
-  }
-  body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--ink);
-    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
-    font-size: 13px;
-    /* Sem isso, arrastar uma linha pra uma pasta seleciona o texto dela
-       (comportamento padrão do navegador ao clicar-e-arrastar). Não afeta
-       o <input> de edição inline — inputs sempre permitem seleção própria. */
-    user-select: none;
-  }
-  #manager-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin: 18px 20px 12px 20px;
-    cursor: move;
-  }
-  h1 {
-    font-size: 16px;
-    font-weight: 600;
-    margin: 0;
-  }
-  #btn-close-manager {
-    background: none;
-    border: none;
-    color: var(--muted);
-    font-size: 16px;
-    line-height: 1;
-    cursor: pointer;
-    padding: 4px 6px;
-    border-radius: 6px;
-  }
-  #btn-close-manager:hover, #btn-close-manager:focus-visible { background: var(--surface-hover); color: var(--ink); }
   h2 {
     font-size: 12px;
     font-weight: 600;
@@ -507,9 +443,9 @@
 </style>
 </head>
 <body>
-  <div id="manager-header">
+  <div id="panel-header">
     <h1>Favoritos</h1>
-    <button type="button" id="btn-close-manager" title="Fechar (Ctrl+W)">✕</button>
+    <button type="button" id="panel-close" title="Fechar (Ctrl+W)">✕</button>
   </div>
 
   <h2>Pastas</h2>
@@ -537,6 +473,7 @@
     </form>
   </dialog>
 
+  <script src="panel-frame.js"></script>
   <script src="bookmarks-renderer.js"></script>
 </body>
 </html>

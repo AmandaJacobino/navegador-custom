@@ -1,0 +1,66 @@
+/* Estilo base dos painéis flutuantes (favoritos e histórico). Carregado pelas
+   páginas dos painéis; cada página só acrescenta o próprio conteúdo. */
+:root {
+  --bg: #131316;
+  --surface: #1c1c1f;
+  --surface-hover: #232327;
+  --ink: #e8e8ea;
+  --muted: #8b8b93;
+  --accent: #7c5cff;
+  --accent-soft: rgba(124, 92, 255, 0.16);
+  --border: #29292e;
+}
+* { box-sizing: border-box; }
+
+/* Contorno pra separar o painel do conteúdo da página atrás dele. Na tag html
+   (não no body, que só cresce até a altura do conteúdo) pra ficar colado nas
+   bordas reais do retângulo da BrowserView. --hl-* vira accent quando o cursor
+   está na zona de redimensionamento daquela borda (ver panel-frame.js). */
+html {
+  --hl-n: transparent;
+  --hl-s: transparent;
+  --hl-e: transparent;
+  --hl-w: transparent;
+  height: 100%;
+  border: 1px solid var(--border);
+  box-shadow:
+    inset 0 2px 0 var(--hl-n),
+    inset 0 -2px 0 var(--hl-s),
+    inset -2px 0 0 var(--hl-e),
+    inset 2px 0 0 var(--hl-w),
+    0 16px 40px rgba(0, 0, 0, 0.55);
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+  /* Sem isso, arrastar uma linha pra outra seleciona texto (comportamento
+     padrão do clique-e-arrastar). Inputs continuam selecionáveis. */
+  user-select: none;
+}
+
+#panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 18px 20px 12px 20px;
+  cursor: move;
+}
+#panel-header h1 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+}
+#panel-close {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+#panel-close:hover, #panel-close:focus-visible { background: var(--surface-hover); color: var(--ink); }
