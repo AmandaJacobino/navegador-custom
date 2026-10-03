@@ -1,3 +1,8 @@
+// Escapa texto vindo do usuário ou de páginas antes de entrar em innerHTML.
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+}
+
 const tree = document.getElementById('tree');
 const empty = document.getElementById('empty');
 // Cabeçalho, fechar e redimensionar ficam em panel-frame.js.
@@ -110,7 +115,7 @@ function renderFolderPickerBase(panelId, triggerLabel, excludeIds, onSelect) {
   wrapper.className = 'folder-picker';
   wrapper.innerHTML = `
     <button type="button" class="folder-picker-trigger" popovertarget="${panelId}" popovertargetaction="toggle" title="Mover para pasta">
-      <span class="current">${triggerLabel}</span>
+      <span class="current">${escapeHtml(triggerLabel)}</span>
       <span class="chevron">▾</span>
     </button>
     <div id="${panelId}" class="folder-picker-panel" popover="auto"></div>
@@ -121,7 +126,7 @@ function renderFolderPickerBase(panelId, triggerLabel, excludeIds, onSelect) {
   const folders = items.filter((b) => b.type === 'folder' && !excludeIds.has(b.id));
   const options = [{ id: '', title: 'Raiz' }, ...folders];
   panel.innerHTML = options
-    .map((f) => `<button type="button" class="folder-option" data-value="${f.id}">${f.title}</button>`)
+    .map((f) => `<button type="button" class="folder-option" data-value="${f.id}">${escapeHtml(f.title)}</button>`)
     .join('');
 
   panel.addEventListener('toggle', (e) => {
@@ -281,14 +286,14 @@ function renderBookmarkRow(entry) {
   li.innerHTML = `
     <div class="row bookmark-row">
       <div class="row-main">
-        <input type="checkbox" class="select-checkbox" aria-label="Selecionar ${entry.title || entry.url}" />
+        <input type="checkbox" class="select-checkbox" aria-label="Selecionar ${escapeHtml(entry.title || entry.url)}" />
         <span class="bookmark-dot">●</span>
-        <span class="entry-title" title="Renomear">${entry.title || entry.url}</span>
+        <span class="entry-title" title="Renomear">${escapeHtml(entry.title || entry.url)}</span>
         <button class="speeddial-toggle ${entry.speedDial ? 'active' : ''}" title="Tela inicial">★</button>
         <span class="move-slot"></span>
         <button class="delete-btn" title="Remover">✕</button>
       </div>
-      <span class="entry-url">${entry.url}</span>
+      <span class="entry-url">${escapeHtml(entry.url)}</span>
     </div>
   `;
   const row = li.querySelector('.row');
@@ -428,7 +433,7 @@ function renderFolderNode(folder, depth = 0) {
   const isCollapsed = collapsedFolders.has(folder.id);
   li.innerHTML = `
     <div class="row folder-row" data-drop-folder-id="${folder.id}">
-      <input type="checkbox" class="select-checkbox" aria-label="Selecionar pasta ${folder.title}" />
+      <input type="checkbox" class="select-checkbox" aria-label="Selecionar pasta ${escapeHtml(folder.title)}" />
       <button
         type="button"
         class="folder-toggle"
@@ -436,7 +441,7 @@ function renderFolderNode(folder, depth = 0) {
         aria-controls="${childrenId}"
         aria-label="${isCollapsed ? 'Expandir pasta' : 'Recolher pasta'}"
       ><span class="chevron-icon" aria-hidden="true">▸</span></button>
-      <span class="folder-title" title="Renomear">${folder.title}</span>
+      <span class="folder-title" title="Renomear">${escapeHtml(folder.title)}</span>
       <span class="folder-count">${count}</span>
       <span class="move-slot"></span>
       <button class="add-sub-btn" title="Nova subpasta">+</button>
