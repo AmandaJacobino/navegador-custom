@@ -1,0 +1,564 @@
+const tree = document.getElementById('tree');
+const empty = document.getElementById('empty');
+const closeManagerBtn = document.getElementById('btn-close-manager');
+const managerHeader = document.getElementById('manager-header');
+closeManagerBtn.addEventListener('click', () => window.bookmarksAPI.closeManager());
+
+// Arrasta o overlay pelo cabeçalho. A posição em si é aplicada pelo processo
+// principal via BrowserView.setBounds (só ele pode mover a view) enquanto
+// consulta a posição do cursor na tela — não dá pra confiar só em mousemove
+// dentro deste documento porque ele só existe dentro do retângulo da própria
+// view: o cursor sai da área e os eventos param de chegar aqui.
+managerHeader.addEventListener('mousedown', (e) => {
+  if (e.button !== 0 || e.target.closest('#btn-close-manager')) return;
+  window.bookmarksAPI.startManagerDrag();
+});
+document.addEventListener('mouseup', () => window.bookmarksAPI.endManagerDrag());
+
+// Redimensiona pelas bordas. Zona invisível de 6px; só o cursor muda.
+const RESIZE_ZONE = 6;
+const EDGE_CURSORS = {
+  n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize',
+  ne: 'nesw-resize', sw: 'nesw-resize', nw: 'nwse-resize', se: 'nwse-resize',
+};
+function edgeAt(x, y) {
+  const top = y < RESIZE_ZONE;
+  const bottom = y >= window.innerHeight - RESIZE_ZONE;
+  const left = x < RESIZE_ZONE;
+  const right = x >= window.innerWidth - RESIZE_ZONE;
+  const edge = (top ? 'n' : '') + (bottom ? 's' : '') + (left ? 'w' : '') + (right ? 'e' : '');
+  return edge || null;
+}
+// Destaca só os lados sob o cursor (accent), via variáveis CSS em bookmarks.html.
+function highlightEdge(edge) {
+  const style = document.documentElement.style;
+  for (const side of ['n', 's', 'e', 'w']) {
+    style.setProperty(`--hl-${side}`, edge && edge.includes(side) ? 'var(--accent)' : 'transparent');
+  }
+}
+document.addEventListener('mousemove', (e) => {
+  const edge = edgeAt(e.clientX, e.clientY);
+  document.documentElement.style.cursor = edge ? EDGE_CURSORS[edge] : '';
+  highlightEdge(edge);
+});
+document.addEventListener('mouseleave', () => {
+  document.documentElement.style.cursor = '';
+  highlightEdge(null);
+});
+document.addEventListener('mousedown', (e) => {
+  const edge = edgeAt(e.clientX, e.clientY);
+  if (!edge || e.button !== 0) return;
+  window.bookmarksAPI.startManagerResize(edge);
+});
+const newFolderBtn = document.getElementById('new-folder-btn');
+const newFolderRow = document.getElementById('new-folder-row');
+const confirmDeleteDialog = document.getElementById('confirm-delete-dialog');
+const confirmDeleteMessage = confirmDeleteDialog.querySelector('.confirm-delete-message');
+const bulkBar = document.getElementById('bulk-bar');
+const bulkCount = bulkBar.querySelector('.bulk-count');
+const bulkMoveSlot = document.getElementById('bulk-move-slot');
+const bulkCancelBtn = bulkBar.querySelector('.bulk-cancel');
+
+let items = [];
+const collapsedFolders = new Set();
+// Seleção em massa (issue #9) — ids de favoritos e/ou pastas marcados pra
+// mover de uma vez, independente de profundidade na árvore.
+const selectedIds = new Set();
+
+// Mover um favorito arrastando pra uma pasta (issue #9) via mouse events em
+// vez do drag-and-drop HTML5 nativo — mesmo problema documentado em
+// renderer.js pra reordenar abas: no Linux/Wayland o DnD nativo do Chromium
+// trava a janela (dragend/drop não disparam de forma confiável).
+let dragBookmark = null; // { id, el, hoverRow, moved }
+let suppressNextClick = false;
+
+function onBookmarkDragMove(e) {
+  if (!dragBookmark) return;
+  if (!dragBookmark.moved) {
+    if (Math.abs(e.clientX - dragBookmark.startX) < 5 && Math.abs(e.clientY - dragBookmark.startY) < 5) return;
+    dragBookmark.moved = true;
+    dragBookmark.el.classList.add('dragging');
+  }
+  const target = document.elementFromPoint(e.clientX, e.clientY);
+  const folderRow = target ? target.closest('[data-drop-folder-id]') : null;
+  if (dragBookmark.hoverRow && dragBookmark.hoverRow !== folderRow) {
+    dragBookmark.hoverRow.classList.remove('drag-over');
+  }
+  if (folderRow) folderRow.classList.add('drag-over');
+  dragBookmark.hoverRow = folderRow;
+}
+
+function onBookmarkDragEnd(e) {
+  document.removeEventListener('mousemove', onBookmarkDragMove);
+  document.removeEventListener('mouseup', onBookmarkDragEnd);
+  if (dragBookmark?.moved) {
+    suppressNextClick = true;
+    dragBookmark.el.classList.remove('dragging');
+    if (dragBookmark.hoverRow) {
+      dragBookmark.hoverRow.classList.remove('drag-over');
+      const folderId = Number(dragBookmark.hoverRow.dataset.dropFolderId);
+      window.bookmarksAPI.move(dragBookmark.id, folderId).then(load);
+    } else {
+      // Soltar em área vazia da árvore (fora de qualquer pasta) volta o
+      // favorito pra raiz; soltar fora da árvore inteira cancela.
+      const target = document.elementFromPoint(e.clientX, e.clientY);
+      if (target?.closest('#tree')) window.bookmarksAPI.move(dragBookmark.id, null).then(load);
+    }
+  }
+  dragBookmark = null;
+}
+
+function folderLabel(parentId) {
+  if (parentId == null) return 'Raiz';
+  const folder = items.find((b) => b.id === parentId && b.type === 'folder');
+  return folder ? folder.title : 'Raiz';
+}
+
+// Uma pasta não pode ir pra dentro de si mesma nem de uma subpasta dela —
+// criaria um ciclo que a torna inalcançável a partir da raiz (e some com
+// tudo que tiver dentro). Calcula o próprio id + todos os descendentes pra
+// excluir do dropdown, em vez de deixar a pessoa escolher e falhar depois.
+function folderAndDescendantIds(folderId) {
+  const ids = new Set([folderId]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const b of items) {
+      if (b.type === 'folder' && ids.has(b.parentId) && !ids.has(b.id)) {
+        ids.add(b.id);
+        grew = true;
+      }
+    }
+  }
+  return ids;
+}
+
+// Posiciona o painel do dropdown como position:fixed calculado à mão, em
+// vez de CSS anchor positioning (position-area) — o Chromium do Electron
+// 31 está bem na borda do suporte a essa feature, então preferimos o modo
+// manual, que a própria spec do Popover cita como alternativa válida.
+function positionFolderPanel(trigger, panel) {
+  const rect = trigger.getBoundingClientRect();
+  const panelRect = panel.getBoundingClientRect();
+  const spaceBelow = window.innerHeight - rect.bottom;
+  const top = spaceBelow >= panelRect.height || spaceBelow >= rect.top
+    ? rect.bottom + 4
+    : rect.top - panelRect.height - 4;
+  panel.style.top = `${Math.max(4, top)}px`;
+  panel.style.left = `${Math.min(rect.left, window.innerWidth - panelRect.width - 8)}px`;
+}
+
+// Dropdown customizado de "mover pra pasta", usando a Popover API
+// (suportada desde o Chrome 116, então funciona no Chromium do Electron
+// 31) em vez de um <select> nativo, que não combinava com o resto do
+// visual. Compartilhado entre o seletor de cada linha (um item por vez) e
+// o da barra de seleção em massa (vários de uma vez) — só muda o rótulo
+// do botão, quais pastas ficam de fora da lista e o que roda ao escolher.
+function renderFolderPickerBase(panelId, triggerLabel, excludeIds, onSelect) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'folder-picker';
+  wrapper.innerHTML = `
+    <button type="button" class="folder-picker-trigger" popovertarget="${panelId}" popovertargetaction="toggle" title="Mover para pasta">
+      <span class="current">${triggerLabel}</span>
+      <span class="chevron">▾</span>
+    </button>
+    <div id="${panelId}" class="folder-picker-panel" popover="auto"></div>
+  `;
+  const trigger = wrapper.querySelector('.folder-picker-trigger');
+  const panel = wrapper.querySelector('.folder-picker-panel');
+
+  const folders = items.filter((b) => b.type === 'folder' && !excludeIds.has(b.id));
+  const options = [{ id: '', title: 'Raiz' }, ...folders];
+  panel.innerHTML = options
+    .map((f) => `<button type="button" class="folder-option" data-value="${f.id}">${f.title}</button>`)
+    .join('');
+
+  panel.addEventListener('toggle', (e) => {
+    if (e.newState === 'open') positionFolderPanel(trigger, panel);
+  });
+  panel.querySelectorAll('.folder-option').forEach((opt) => {
+    opt.addEventListener('click', () => {
+      const value = opt.dataset.value;
+      panel.hidePopover();
+      onSelect(value ? Number(value) : null);
+    });
+  });
+  return wrapper;
+}
+
+function renderFolderPicker(item, excludeIds = new Set()) {
+  return renderFolderPickerBase(
+    `fp-${item.id}`,
+    folderLabel(item.parentId),
+    excludeIds,
+    (targetId) => window.bookmarksAPI.move(item.id, targetId).then(load),
+  );
+}
+
+// Pastas que não podem ser destino da seleção em massa: qualquer pasta
+// selecionada e todas as suas descendentes (moveria a pasta pra dentro
+// dela mesma). Bem menos comum que o caso de um item só, mas o mesmo
+// motivo do folderAndDescendantIds de um item vale aqui.
+function selectedExcludedFolderIds() {
+  const excluded = new Set();
+  selectedIds.forEach((id) => {
+    const entry = items.find((b) => b.id === id);
+    if (entry?.type === 'folder') folderAndDescendantIds(entry.id).forEach((fid) => excluded.add(fid));
+  });
+  return excluded;
+}
+
+async function bulkMoveSelected(targetId) {
+  const ids = Array.from(selectedIds);
+  await Promise.all(ids.map((id) => window.bookmarksAPI.move(id, targetId)));
+  selectedIds.clear();
+  load();
+}
+
+function updateBulkBar() {
+  const count = selectedIds.size;
+  document.body.classList.toggle('has-bulk-bar', count > 0);
+  bulkBar.classList.toggle('visible', count > 0);
+  bulkMoveSlot.innerHTML = '';
+  if (count === 0) return;
+  bulkCount.textContent = count === 1 ? '1 item selecionado' : `${count} itens selecionados`;
+  bulkMoveSlot.appendChild(
+    renderFolderPickerBase('bulk-move-panel', 'Mover para', selectedExcludedFolderIds(), bulkMoveSelected),
+  );
+}
+
+function toggleSelected(id, checked) {
+  if (checked) selectedIds.add(id);
+  else selectedIds.delete(id);
+  updateBulkBar();
+}
+
+bulkCancelBtn.addEventListener('click', () => {
+  selectedIds.clear();
+  render(items);
+});
+
+// Substitui um elemento por um <input> inline pra edição (Electron não
+// implementa window.prompt() no Linux — ele retorna null sem abrir diálogo
+// nenhum, então toda edição de texto aqui precisa ser feita in-page).
+function editInline(anchorEl, initialValue, onSubmit) {
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = initialValue;
+  input.className = 'inline-edit';
+  anchorEl.replaceWith(input);
+  input.focus();
+  input.select();
+
+  let done = false;
+  const finish = (commit) => {
+    if (done) return;
+    done = true;
+    const value = input.value.trim();
+    if (commit && value) onSubmit(value);
+    else load();
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') finish(true);
+    if (e.key === 'Escape') finish(false);
+  });
+  input.addEventListener('blur', () => finish(true));
+}
+
+// Formulário inline de "nova pasta/subpasta", inserido logo após o botão
+// que o abriu.
+function showNewFolderForm(afterEl, parentId) {
+  const existing = document.querySelector('.new-folder-form');
+  if (existing) existing.remove();
+
+  const form = document.createElement('div');
+  form.className = 'row new-folder-form';
+  form.innerHTML = `<input type="text" placeholder="Nome da pasta" /> <button class="confirm-btn">Criar</button>`;
+  afterEl.insertAdjacentElement('afterend', form);
+  animateElementEntrance(form);
+
+  const input = form.querySelector('input');
+  const confirmBtn = form.querySelector('.confirm-btn');
+  input.focus();
+  let submitted = false;
+  const cancel = () => { animateElementRemoval(form).then(() => form.remove()); };
+  const submit = () => {
+    if (submitted) return;
+    const title = input.value.trim();
+    if (!title) { cancel(); return; }
+    submitted = true;
+    confirmBtn.disabled = true;
+    // O formulário de pasta na raiz fica fora de #tree (fica ao lado do
+    // botão "+ Nova pasta"), então o load() abaixo — que só redesenha
+    // #tree e #speeddial — não o remove sozinho.
+    window.bookmarksAPI.addFolder(title, parentId).then(() => {
+      form.remove();
+      load();
+    });
+  };
+  confirmBtn.addEventListener('click', submit);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') submit();
+    if (e.key === 'Escape') cancel();
+  });
+}
+
+function countDescendants(folderId) {
+  const direct = items.filter((b) => b.parentId === folderId);
+  return direct.reduce((total, item) => {
+    return total + 1 + (item.type === 'folder' ? countDescendants(item.id) : 0);
+  }, 0);
+}
+
+// Excluir uma pasta apaga tudo dentro dela junto — sem aviso nenhum antes
+// disso já causou perda de dados sem querer. Pede confirmação mesmo pra
+// pasta vazia, pra manter o botão de excluir sempre com a mesma trava.
+function confirmFolderDeletion(folder) {
+  confirmDeleteMessage.textContent = `Tem certeza que deseja excluir "${folder.title}"?`;
+  confirmDeleteDialog.showModal();
+  return new Promise((resolve) => {
+    confirmDeleteDialog.addEventListener(
+      'close',
+      () => resolve(confirmDeleteDialog.returnValue === 'confirm'),
+      { once: true },
+    );
+  });
+}
+
+function renderBookmarkRow(entry) {
+  const li = document.createElement('li');
+  li.innerHTML = `
+    <div class="row bookmark-row">
+      <div class="row-main">
+        <input type="checkbox" class="select-checkbox" aria-label="Selecionar ${entry.title || entry.url}" />
+        <span class="bookmark-dot">●</span>
+        <span class="entry-title" title="Renomear">${entry.title || entry.url}</span>
+        <button class="speeddial-toggle ${entry.speedDial ? 'active' : ''}" title="Tela inicial">★</button>
+        <span class="move-slot"></span>
+        <button class="delete-btn" title="Remover">✕</button>
+      </div>
+      <span class="entry-url">${entry.url}</span>
+    </div>
+  `;
+  const row = li.querySelector('.row');
+  li.querySelector('.move-slot').replaceWith(renderFolderPicker(entry));
+
+  const checkbox = li.querySelector('.select-checkbox');
+  checkbox.checked = selectedIds.has(entry.id);
+  checkbox.addEventListener('change', () => toggleSelected(entry.id, checkbox.checked));
+
+  // Arrastar um favorito pra cima de uma pasta move ele pra lá — o select
+  // continua funcionando como alternativa (útil quando a pasta de destino
+  // tem muitos itens e mirar nela com o mouse fica ruim).
+  row.addEventListener('mousedown', (e) => {
+    if (e.button !== 0 || e.target.closest('select') || e.target.closest('button') || e.target.closest('input')) return;
+    dragBookmark = { id: entry.id, el: row, startX: e.clientX, startY: e.clientY, moved: false, hoverRow: null };
+    document.addEventListener('mousemove', onBookmarkDragMove);
+    document.addEventListener('mouseup', onBookmarkDragEnd);
+  });
+
+  li.querySelector('.entry-title').addEventListener('click', (e) => {
+    if (suppressNextClick) { suppressNextClick = false; return; }
+    editInline(e.target, entry.title || entry.url, (title) => window.bookmarksAPI.rename(entry.id, title).then(load));
+  });
+  li.querySelector('.entry-url').addEventListener('click', () => {
+    if (suppressNextClick) { suppressNextClick = false; return; }
+    window.bookmarksAPI.openUrl(entry.url);
+  });
+  li.querySelector('.speeddial-toggle').addEventListener('click', () => {
+    window.bookmarksAPI.toggleSpeedDial(entry.id).then(load);
+  });
+  li.querySelector('.delete-btn').addEventListener('click', () => {
+    window.bookmarksAPI.remove(entry.id).then(load);
+  });
+  return li;
+}
+
+// Anima a lista de filhos de uma pasta entre recolhida e aberta usando a
+// Web Animations API (funciona em qualquer Chromium, ao contrário de
+// interpolate-size/calc-size(), que só chegaram no Chrome 129 — o
+// Electron 31 empacota o Chromium 126). Os keyframes de altura são
+// definidos explicitamente, então não dependem do estilo atual do
+// elemento nem exigem forçar reflow.
+function setFolderCollapsed(childList, toggleBtn, collapsed, { animate = true } = {}) {
+  toggleBtn.setAttribute('aria-expanded', String(!collapsed));
+  toggleBtn.setAttribute('aria-label', collapsed ? 'Expandir pasta' : 'Recolher pasta');
+
+  childList.getAnimations().forEach((a) => a.cancel());
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  if (!animate || reduceMotion) {
+    childList.style.height = '';
+    childList.style.overflow = '';
+    childList.hidden = collapsed;
+    return;
+  }
+
+  const duration = 220;
+  const easing = 'cubic-bezier(0.4, 0, 0.2, 1)';
+
+  if (collapsed) {
+    const startHeight = childList.scrollHeight;
+    childList.style.overflow = 'hidden';
+    const anim = childList.animate(
+      [{ height: `${startHeight}px` }, { height: '0px' }],
+      { duration, easing, fill: 'forwards' },
+    );
+    anim.onfinish = () => {
+      childList.hidden = true;
+      childList.style.height = '';
+      childList.style.overflow = '';
+    };
+  } else {
+    childList.hidden = false;
+    const endHeight = childList.scrollHeight;
+    childList.style.overflow = 'hidden';
+    const anim = childList.animate(
+      [{ height: '0px' }, { height: `${endHeight}px` }],
+      { duration, easing, fill: 'forwards' },
+    );
+    anim.onfinish = () => {
+      childList.style.height = '';
+      childList.style.overflow = '';
+    };
+  }
+}
+
+// Anima a saída de um elemento (linha da árvore ao excluir uma pasta,
+// formulário de nova pasta ao cancelar) antes de mexer nos dados de
+// verdade ou removê-lo — sem isso ele some de golpe.
+function animateElementRemoval(el) {
+  return new Promise((resolve) => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      resolve();
+      return;
+    }
+    const startHeight = el.getBoundingClientRect().height;
+    const startMargin = getComputedStyle(el).marginBottom;
+    el.style.overflow = 'hidden';
+    el.style.pointerEvents = 'none';
+    const anim = el.animate(
+      [
+        { opacity: 1, height: `${startHeight}px`, marginBottom: startMargin },
+        { opacity: 0, height: '0px', marginBottom: '0px' },
+      ],
+      { duration: 200, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'forwards' },
+    );
+    anim.onfinish = resolve;
+  });
+}
+
+// Contrário de animateElementRemoval — usado ao inserir o formulário de
+// nova pasta, pra ele crescer suavemente em vez de aparecer de golpe. O
+// elemento já precisa estar no DOM (com o tamanho final) quando chamada.
+function animateElementEntrance(el) {
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const endHeight = el.getBoundingClientRect().height;
+  const endMargin = getComputedStyle(el).marginBottom;
+  el.style.overflow = 'hidden';
+  const anim = el.animate(
+    [
+      { opacity: 0, height: '0px', marginBottom: '0px' },
+      { opacity: 1, height: `${endHeight}px`, marginBottom: endMargin },
+    ],
+    { duration: 200, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'forwards' },
+  );
+  anim.onfinish = () => {
+    el.style.height = '';
+    el.style.overflow = '';
+    el.style.marginBottom = '';
+  };
+}
+
+function renderFolderNode(folder, depth = 0) {
+  const li = document.createElement('li');
+  const count = countDescendants(folder.id);
+  const childrenId = `children-${folder.id}`;
+  const isCollapsed = collapsedFolders.has(folder.id);
+  li.innerHTML = `
+    <div class="row folder-row" data-drop-folder-id="${folder.id}">
+      <input type="checkbox" class="select-checkbox" aria-label="Selecionar pasta ${folder.title}" />
+      <button
+        type="button"
+        class="folder-toggle"
+        aria-expanded="${!isCollapsed}"
+        aria-controls="${childrenId}"
+        aria-label="${isCollapsed ? 'Expandir pasta' : 'Recolher pasta'}"
+      ><span class="chevron-icon" aria-hidden="true">▸</span></button>
+      <span class="folder-title" title="Renomear">${folder.title}</span>
+      <span class="folder-count">${count}</span>
+      <span class="move-slot"></span>
+      <button class="add-sub-btn" title="Nova subpasta">+</button>
+      <button class="delete-btn" title="Remover pasta">✕</button>
+    </div>
+  `;
+  const row = li.querySelector('.row');
+  row.style.setProperty('--depth', String(depth));
+  const toggleBtn = li.querySelector('.folder-toggle');
+  li.querySelector('.move-slot').replaceWith(renderFolderPicker(folder, folderAndDescendantIds(folder.id)));
+
+  const childList = document.createElement('ul');
+  childList.id = childrenId;
+  renderLevel(childList, folder.id, depth + 1);
+  li.appendChild(childList);
+  setFolderCollapsed(childList, toggleBtn, isCollapsed, { animate: false });
+
+  const checkbox = li.querySelector('.select-checkbox');
+  checkbox.checked = selectedIds.has(folder.id);
+  checkbox.addEventListener('change', () => toggleSelected(folder.id, checkbox.checked));
+
+  // Clicar em qualquer ponto vazio da linha (não só no botão ▸) recolhe ou
+  // reabre a pasta — só os controles com ação própria (selecionar,
+  // renomear, mover, nova subpasta, remover) ficam de fora.
+  row.addEventListener('click', (e) => {
+    if (e.target.closest('.select-checkbox, .folder-title, .folder-picker, .add-sub-btn, .delete-btn')) return;
+    const willCollapse = !collapsedFolders.has(folder.id);
+    if (willCollapse) collapsedFolders.add(folder.id);
+    else collapsedFolders.delete(folder.id);
+    setFolderCollapsed(childList, toggleBtn, willCollapse);
+  });
+  li.querySelector('.folder-title').addEventListener('click', (e) => {
+    editInline(e.target, folder.title, (title) => window.bookmarksAPI.rename(folder.id, title).then(load));
+  });
+  li.querySelector('.add-sub-btn').addEventListener('click', () => showNewFolderForm(row, folder.id));
+  li.querySelector('.delete-btn').addEventListener('click', () => {
+    confirmFolderDeletion(folder).then((confirmed) => {
+      if (!confirmed) return;
+      animateElementRemoval(li).then(() => window.bookmarksAPI.remove(folder.id).then(load));
+    });
+  });
+
+  return li;
+}
+
+function renderLevel(container, parentId, depth = 0) {
+  const children = items.filter((b) => (b.parentId ?? null) === parentId);
+  children.filter((b) => b.type === 'folder').forEach((f) => container.appendChild(renderFolderNode(f, depth)));
+  children.filter((b) => b.type === 'bookmark').forEach((b) => container.appendChild(renderBookmarkRow(b)));
+}
+
+function render(list) {
+  items = list;
+  // Um item selecionado pode ter sido removido (excluído, ou dentro de uma
+  // pasta excluída) entre uma seleção e outra — tira ele da seleção pra
+  // não contar na barra nem sobrar num alvo de mover em massa inválido.
+  selectedIds.forEach((id) => { if (!items.some((b) => b.id === id)) selectedIds.delete(id); });
+
+  empty.hidden = items.length > 0;
+  tree.innerHTML = '';
+  renderLevel(tree, null);
+  updateBulkBar();
+}
+
+async function load() {
+  render(await window.bookmarksAPI.getAll());
+}
+
+newFolderBtn.addEventListener('click', () => showNewFolderForm(newFolderRow, null));
+// Ctrl+N não tinha nenhum uso no app — vira o atalho de "nova pasta" só
+// enquanto esta janela está em foco (registrado por janela no main.js,
+// igual ao Ctrl+W de cada janela secundária).
+window.bookmarksAPI.onNewFolderShortcut(() => showNewFolderForm(newFolderRow, null));
+
+window.bookmarksAPI.onUpdate(render);
+load();

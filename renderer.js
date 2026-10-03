@@ -4,6 +4,7 @@ const address = document.getElementById('address');
 const btnBack = document.getElementById('btn-back');
 const btnForward = document.getElementById('btn-forward');
 const btnReload = document.getElementById('btn-reload');
+const btnBookmark = document.getElementById('btn-bookmark');
 
 let currentState = { tabs: [], activeTabId: null, canGoBack: false, canGoForward: false };
 
@@ -98,6 +99,10 @@ function render() {
 
   btnBack.disabled = !currentState.canGoBack;
   btnForward.disabled = !currentState.canGoForward;
+
+  const bookmarked = !!active?.bookmarked;
+  btnBookmark.textContent = bookmarked ? '★' : '☆';
+  btnBookmark.classList.toggle('active', bookmarked);
 }
 
 window.browserAPI.onTabsUpdate((state) => {
@@ -109,6 +114,24 @@ newTabBtn.addEventListener('click', () => window.browserAPI.newTab());
 btnBack.addEventListener('click', () => window.browserAPI.back());
 btnForward.addEventListener('click', () => window.browserAPI.forward());
 btnReload.addEventListener('click', () => window.browserAPI.reload());
+// Primeiro clique adiciona a página aos favoritos; com ela já favoritada, o
+// clique abre o dropdown (ver openBookmarkMenu em main.js), empilhado por
+// cima da página ativa como BrowserView de overlay.
+btnBookmark.addEventListener('click', () => {
+  const active = currentState.tabs.find((t) => t.id === currentState.activeTabId);
+  if (!active?.bookmarked) {
+    window.browserAPI.toggleBookmark();
+    return;
+  }
+  const rect = btnBookmark.getBoundingClientRect();
+  window.browserAPI.openBookmarkMenu({
+    left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom,
+  });
+});
+// Rede de segurança: se o arraste do gerenciador de favoritos (ver
+// bookmarks-renderer.js) terminar com o cursor sobre a toolbar em vez de
+// sobre o próprio painel, esse mouseup nunca chegaria à view dele.
+document.addEventListener('mouseup', () => window.browserAPI.endBookmarksManagerDrag());
 
 address.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {

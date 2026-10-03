@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Favoritos</title>
+<style>
+  :root {
+    --bg-elevated: #2b2d31;
+    --text: #e3e3e3;
+    --border: #3a3c40;
+    --accent: #4c8bf5;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 4px;
+    background: var(--bg-elevated);
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: var(--text);
+    user-select: none;
+    overflow: hidden;
+  }
+  button {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    color: var(--text);
+    font-size: 12px;
+    font-family: inherit;
+    padding: 8px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  button:hover, button:focus-visible { background: rgba(255, 255, 255, 0.08); }
+  button:disabled { opacity: 0.4; cursor: default; }
+  button:disabled:hover { background: none; }
+  .menu-separator { height: 1px; margin: 4px 6px; border: none; background: var(--border); }
+  .menu-check { opacity: 0; color: var(--accent); }
+  button[aria-pressed="true"] .menu-check { opacity: 1; }
+
+  /* Reaberto a cada clique na estrela nesse mesmo documento (a view é
+     reaproveitada), então a entrada usa @keyframes + troca de classe em
+     vez de transition — uma transition não reanima ao repetir o mesmo
+     valor de destino, uma animation reinicia sempre que a classe volta a
+     ser aplicada. */
+  @keyframes bookmark-menu-in {
+    from { opacity: 0; transform: translateY(-4px) scale(0.97); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  body.entering { animation: bookmark-menu-in 160ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+  @media (prefers-reduced-motion: reduce) {
+    body.entering { animation: none; }
+  }
+</style>
+</head>
+<body>
+  <button type="button" id="menu-add-bookmark">Adicionar aos favoritos</button>
+  <button type="button" id="menu-remove-bookmark">Remover dos favoritos</button>
+  <hr class="menu-separator">
+  <button type="button" id="menu-toggle-speed-dial" aria-pressed="false">
+    <span>Adicionar à tela inicial</span>
+    <span class="menu-check">✓</span>
+  </button>
+  <hr class="menu-separator">
+  <button type="button" id="menu-manage-bookmarks">Gerenciar favoritos…</button>
+  <script src="./bookmark-menu-renderer.js"></script>
+</body>
+</html>

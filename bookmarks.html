@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Favoritos</title>
+<style>
+  :root {
+    --bg: #131316;
+    --surface: #1c1c1f;
+    --surface-hover: #232327;
+    --ink: #e8e8ea;
+    --muted: #8b8b93;
+    --accent: #7c5cff;
+    --accent-soft: rgba(124, 92, 255, 0.16);
+    --border: #29292e;
+  }
+  * { box-sizing: border-box; }
+  /* Contorno pra separar o overlay do conteúdo da página atrás dele — sem
+     isso os dois fundos escuros se confundem. Na tag html (não no body,
+     que só cresce até a altura do conteúdo) pra ficar sempre colado nas
+     bordas reais do retângulo da BrowserView, do tamanho exato dela. */
+  /* Lados de redimensionamento: cada --hl-* vira accent quando o cursor
+     está na zona daquela borda (ver bookmarks-renderer.js). */
+  html {
+    --hl-n: transparent;
+    --hl-s: transparent;
+    --hl-e: transparent;
+    --hl-w: transparent;
+    height: 100%;
+    border: 1px solid var(--border);
+    box-shadow:
+      inset 0 2px 0 var(--hl-n),
+      inset 0 -2px 0 var(--hl-s),
+      inset -2px 0 0 var(--hl-e),
+      inset 2px 0 0 var(--hl-w),
+      0 16px 40px rgba(0, 0, 0, 0.55);
+  }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 13px;
+    /* Sem isso, arrastar uma linha pra uma pasta seleciona o texto dela
+       (comportamento padrão do navegador ao clicar-e-arrastar). Não afeta
+       o <input> de edição inline — inputs sempre permitem seleção própria. */
+    user-select: none;
+  }
+  #manager-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin: 18px 20px 12px 20px;
+    cursor: move;
+  }
+  h1 {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 0;
+  }
+  #btn-close-manager {
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: 6px;
+  }
+  #btn-close-manager:hover, #btn-close-manager:focus-visible { background: var(--surface-hover); color: var(--ink); }
+  h2 {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted);
+    margin: 22px 20px 10px 20px;
+  }
+
+  #new-folder-row {
+    padding: 0 20px 8px 20px;
+  }
+  #new-folder-btn {
+    background: none;
+    border: 1px dashed var(--border);
+    border-radius: 6px;
+    color: var(--muted);
+    padding: 6px 12px;
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  #new-folder-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  .new-folder-form {
+    padding: 6px 20px;
+    display: flex;
+    gap: 8px;
+  }
+  .inline-edit,
+  .new-folder-form input {
+    background: var(--surface);
+    color: var(--ink);
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    padding: 5px 8px;
+    font-size: 12px;
+    font-family: inherit;
+    flex: 1;
+  }
+  .new-folder-form .confirm-btn {
+    /* Sobrescreve #tree .row button (que esconde botões até o hover da
+       linha) — este botão pode ser inserido dentro da árvore, ao criar
+       uma subpasta, mas precisa ficar sempre visível. */
+    opacity: 1 !important;
+    background: var(--accent);
+    color: var(--bg);
+    border: none;
+    border-radius: 6px;
+    padding: 5px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+  }
+
+  /* Árvore: linhas planas com hover, como o gerenciador de favoritos do
+     Chrome — sem cards com sombra, indentação vira uma guia sutil. */
+  #tree {
+    list-style: none;
+    margin: 0;
+    padding: 0 12px 20px 12px;
+  }
+  #tree ul {
+    list-style: none;
+    /* Sem margem própria: só o li (abaixo) define espaçamento vertical.
+       Antes, a margem daqui somava com a margem do li e deixava o espaço
+       depois de uma pasta aberta maior que entre as outras linhas. */
+    margin: 0;
+    padding-left: 20px;
+    border-left: 1px solid var(--border);
+  }
+  /* Espaço entre itens da árvore — sem isso, pastas fechadas (sem filhos
+     visíveis abrindo espaço entre elas) ficam grudadas umas nas outras.
+     Uma única regra de margem, em qualquer profundidade, pra manter o
+     espaçamento uniforme entre todas as linhas. */
+  #tree li { border-radius: 6px; margin-bottom: 3px; }
+  #tree li:last-child { margin-bottom: 0; }
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 6px;
+  }
+  .row:hover { background: var(--surface-hover); }
+  .row.drag-over { background: var(--accent-soft); outline: 1px dashed var(--accent); }
+  .bookmark-row.dragging { opacity: 0.4; }
+
+  /* Destaque de fundo pra diferenciar pastas dos favoritos soltos na
+     árvore — .row:hover/.row.drag-over têm mais especificidade (classe +
+     pseudo-classe) que esta única classe, então continuam vencendo em
+     hover/drag sem precisar duplicar regra. Cada nível de profundidade
+     recebe um tom um pouco mais claro que o anterior (--depth setado via
+     JS em bookmarks-renderer.js), pra dar noção visual de aninhamento sem
+     precisar de mais indentação. Limitado a 6 níveis pra não estourar pra
+     um cinza claro demais em árvores bem fundas. color-mix() tem suporte
+     desde o Chrome 111, então funciona no Chromium do Electron 31. */
+  .folder-row {
+    background: color-mix(in srgb, var(--surface) 100%, white calc(min(var(--depth, 0), 6) * 4%));
+    cursor: pointer;
+  }
+
+  .bookmark-dot {
+    flex-shrink: 0;
+    color: var(--muted);
+  }
+  .folder-toggle {
+    flex-shrink: 0;
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    /* Ao contrário dos outros botões de ação (★ ✕ +), o toggle de
+       recolher/expandir precisa ficar sempre visível — é a única forma de
+       reabrir uma pasta recolhida, não um extra que aparece no hover. */
+    opacity: 1 !important;
+  }
+  .folder-toggle:hover { background: var(--surface-hover); color: var(--ink); }
+  .folder-toggle .chevron-icon {
+    display: inline-block;
+    /* Mesma duração/curva da animação de altura em bookmarks-renderer.js
+       (Web Animations API), pra girar e abrir em sincronia. */
+    transition: transform 220ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .folder-toggle[aria-expanded="true"] .chevron-icon { transform: rotate(90deg); }
+  @media (prefers-reduced-motion: reduce) {
+    .folder-toggle .chevron-icon { transition: none; }
+  }
+  .folder-title {
+    flex: 1;
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .folder-count {
+    color: var(--muted);
+    font-size: 11px;
+    flex-shrink: 0;
+  }
+
+  .bookmark-row { flex-direction: column; align-items: stretch; gap: 2px; cursor: grab; }
+  .bookmark-row .row-main { display: flex; align-items: center; gap: 8px; }
+  .entry-title {
+    flex: 1;
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .entry-url {
+    color: var(--muted);
+    font-size: 11px;
+    padding-left: 20px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+
+  /* Dropdown "mover pra pasta": Popover API em vez de <select> nativo —
+     appearance: base-select (Chrome 135+) não existe no Chromium do
+     Electron 31, mas a Popover API básica já existe desde o Chrome 116,
+     então dá pra construir um dropdown com cara própria e animação. */
+  .folder-picker { display: contents; }
+  .folder-picker-trigger {
+    display: flex !important;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px !important;
+  }
+  .folder-picker-trigger .current {
+    max-width: 80px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .folder-picker-trigger .chevron { font-size: 9px; opacity: 0.7; }
+  /* !important porque #tree .row button (mais abaixo) tem um ID na
+     especificidade e ganharia de qualquer seletor só-com-classe daqui. */
+  #tree .row:hover .folder-picker-trigger,
+  .folder-picker-trigger:focus-visible,
+  .folder-picker-trigger:has(+ [popover]:popover-open) { opacity: 1 !important; }
+
+  .folder-picker-panel {
+    position: fixed;
+    margin: 0;
+    padding: 4px;
+    min-width: 150px;
+    max-height: 240px;
+    overflow-y: auto;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+    transition: opacity 130ms ease, transform 130ms ease, display 130ms allow-discrete, overlay 130ms allow-discrete;
+  }
+  .folder-picker-panel:popover-open {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  @starting-style {
+    .folder-picker-panel:popover-open {
+      opacity: 0;
+      transform: translateY(-4px) scale(0.97);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .folder-picker-panel { transition: none; }
+  }
+  /* !important em tudo que #tree .row button também define: o painel do
+     popover continua sendo descendente do DOM de .row (só é promovido
+     visualmente pro top layer), então aquela regra — que tem um ID —
+     ganharia da especificidade daqui sem isso. */
+  .folder-picker-panel .folder-option {
+    display: block !important;
+    width: 100% !important;
+    text-align: left !important;
+    opacity: 1 !important;
+    background: none !important;
+    border: none !important;
+    color: var(--ink) !important;
+    font-size: 12px !important;
+    font-family: inherit !important;
+    padding: 6px 8px !important;
+    border-radius: 6px !important;
+    cursor: pointer !important;
+  }
+  .folder-picker-panel .folder-option:hover,
+  .folder-picker-panel .folder-option:focus-visible {
+    background: var(--accent-soft) !important;
+    color: var(--accent) !important;
+  }
+
+  /* Botões de ação (★ ✕ +) só aparecem no hover da linha — mas isso vale
+     só pras linhas da árvore. O botão "Criar" do formulário de nova pasta
+     usa a mesma classe .row de layout e precisa ficar sempre visível. */
+  #tree .row button {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1;
+    padding: 2px 4px;
+    border-radius: 4px;
+    flex-shrink: 0;
+    opacity: 0;
+    font-family: inherit;
+  }
+  #tree .row:hover button,
+  #tree .row button:focus-visible { opacity: 1; }
+  #tree .row button:hover, #tree .row button:focus-visible { background: var(--surface); color: var(--ink); }
+  #tree .row button.active { opacity: 1; color: var(--accent); }
+
+  :where(button, .entry-title, .folder-title, .entry-url):focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+
+  #empty {
+    padding: 20px;
+    color: var(--muted);
+  }
+
+  /* Checkbox de seleção em massa, em cada linha da árvore. appearance:none
+     + ::before troca a forma nativa (quadrado) por um círculo no estilo
+     do resto da página, mantendo o <input type="checkbox"> de verdade por
+     baixo (foco, teclado, :checked, leitor de tela). Some quando a linha
+     não está em hover/foco — igual aos outros botões de ação (★ ✕ +) —
+     mas continua visível enquanto marcado, senão a seleção fica invisível
+     assim que o mouse sai da linha. */
+  .select-checkbox {
+    flex-shrink: 0;
+    appearance: none;
+    margin: 0;
+    width: 15px;
+    height: 15px;
+    border-radius: 50%;
+    border: 1.5px solid var(--muted);
+    background: transparent;
+    display: grid;
+    place-content: center;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 150ms ease, border-color 150ms ease;
+  }
+  .select-checkbox::before {
+    content: '';
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent);
+    transform: scale(0);
+    transition: transform 120ms ease;
+  }
+  .select-checkbox:checked {
+    border-color: var(--accent);
+  }
+  .select-checkbox:checked::before {
+    transform: scale(1);
+  }
+  #tree .row:hover .select-checkbox,
+  .select-checkbox:focus-visible,
+  .select-checkbox:checked {
+    opacity: 1;
+  }
+  .select-checkbox:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .select-checkbox, .select-checkbox::before { transition: none; }
+  }
+
+  /* Espaço reservado embaixo pra barra de ações em massa não cobrir a
+     última linha da árvore — só quando ela está de fato visível. */
+  body.has-bulk-bar { padding-bottom: 52px; }
+
+  #bulk-bar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.35);
+    transform: translateY(100%);
+    transition: transform 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  #bulk-bar.visible { transform: translateY(0); }
+  #bulk-bar .bulk-count { flex: 1; font-size: 12px; color: var(--muted); }
+  #bulk-bar .bulk-cancel {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 12px;
+    font-family: inherit;
+    padding: 6px 10px;
+    border-radius: 6px;
+  }
+  #bulk-bar .bulk-cancel:hover { color: var(--ink); background: var(--surface-hover); }
+
+  /* Mesmo tratamento do botão "Criar" do formulário de nova pasta (único
+     botão sólido/preenchido que já existe no app) — não do "Cancelar" ao
+     lado, que é texto puro sem contorno. O chevron ▾ some aqui: um
+     indicador de dropdown dentro de um botão preenchido é uma combinação
+     que não existe em nenhum outro lugar da interface, e foi isso (não a
+     altura ou o arredondamento, que já batiam) que ficava destoando. */
+  #bulk-bar .folder-picker-trigger {
+    appearance: none;
+    background: var(--accent);
+    color: var(--bg);
+    border: none;
+    box-shadow: none;
+    font-size: 12px !important;
+    font-weight: 600;
+    padding: 5px 14px;
+    border-radius: 6px;
+    transition: background-color 150ms ease;
+  }
+  #bulk-bar .folder-picker-trigger:hover { background: #9376ff; }
+  #bulk-bar .folder-picker-trigger .current { max-width: none; }
+  #bulk-bar .folder-picker-trigger .chevron { display: none; }
+  @media (prefers-reduced-motion: reduce) {
+    #bulk-bar .folder-picker-trigger { transition: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #bulk-bar { transition: none; }
+  }
+
+  /* Confirmação antes de excluir uma pasta com conteúdo dentro — <dialog>
+     nativo em vez de overlay customizado: trapa foco e fecha com Esc de
+     graça. Sem closedby="any" (light-dismiss no clique fora): só existe a
+     partir do Chrome 134, e o Electron 31 empacota o Chromium 126. Uma
+     ação destrutiva não precisar de light-dismiss não é perda nenhuma. */
+  #confirm-delete-dialog {
+    background: var(--surface);
+    color: var(--ink);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    width: 300px;
+    box-shadow: 0 20px 48px rgba(0, 0, 0, 0.5);
+  }
+  #confirm-delete-dialog::backdrop {
+    background: rgba(0, 0, 0, 0.5);
+  }
+  #confirm-delete-dialog h2 {
+    margin: 0 0 14px 0;
+    font-size: 14px;
+    text-align: center;
+  }
+  #confirm-delete-dialog p {
+    margin: 0 0 2px 0;
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.5;
+    text-align: center;
+  }
+  #confirm-delete-dialog .confirm-delete-warning {
+    margin-bottom: 18px;
+  }
+  #confirm-delete-dialog .dialog-actions {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+  }
+  #confirm-delete-dialog button {
+    font-family: inherit;
+    font-size: 12px;
+    padding: 6px 14px;
+    border-radius: 6px;
+    border: none;
+    cursor: pointer;
+    transition: background-color 150ms ease, color 150ms ease, transform 100ms ease;
+  }
+  #confirm-delete-dialog button:active { transform: scale(0.96); }
+  #confirm-delete-dialog button[value="cancel"] { background: none; color: var(--muted); }
+  #confirm-delete-dialog button[value="cancel"]:hover { color: var(--ink); }
+  #confirm-delete-dialog button[value="confirm"] { background: #e5484d; color: #fff; font-weight: 600; }
+  #confirm-delete-dialog button[value="confirm"]:hover { background: #ff5b60; }
+  @media (prefers-reduced-motion: reduce) {
+    #confirm-delete-dialog button { transition: none; }
+  }
+</style>
+</head>
+<body>
+  <div id="manager-header">
+    <h1>Favoritos</h1>
+    <button type="button" id="btn-close-manager" title="Fechar (Ctrl+W)">✕</button>
+  </div>
+
+  <h2>Pastas</h2>
+  <div id="new-folder-row">
+    <button id="new-folder-btn">+ Nova pasta</button>
+  </div>
+  <ul id="tree"></ul>
+  <div id="empty" hidden>Nenhum favorito salvo ainda.</div>
+
+  <div id="bulk-bar">
+    <span class="bulk-count"></span>
+    <div id="bulk-move-slot"></div>
+    <button type="button" class="bulk-cancel">Cancelar</button>
+  </div>
+
+  <dialog id="confirm-delete-dialog" aria-labelledby="confirm-delete-title">
+    <form method="dialog">
+      <h2 id="confirm-delete-title">Excluir pasta</h2>
+      <p class="confirm-delete-message"></p>
+      <p class="confirm-delete-warning">Essa ação não pode ser desfeita.</p>
+      <div class="dialog-actions">
+        <button type="submit" value="cancel">Cancelar</button>
+        <button type="submit" value="confirm">Excluir tudo</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="bookmarks-renderer.js"></script>
+</body>
+</html>
