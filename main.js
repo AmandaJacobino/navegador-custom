@@ -260,6 +260,20 @@ function saveBookmarks() {
   fs.writeFileSync(BOOKMARKS_FILE, JSON.stringify(bookmarks, null, 2));
 }
 
+// Registra uma navegação no histórico. Recarregar a mesma página só atualiza
+// a hora da entrada atual; navegação dentro da página (SPA) conta como nova.
+function recordNavigation(tab, navUrl) {
+  tab.url = navUrl;
+  if (tab.historyEntry && tab.historyEntry.url === navUrl) {
+    tab.historyEntry.timestamp = Date.now();
+  } else {
+    tab.historyEntry = { id: nextHistoryId++, url: navUrl, title: '', timestamp: Date.now() };
+    history.unshift(tab.historyEntry);
+    if (history.length > MAX_HISTORY_ENTRIES) history.length = MAX_HISTORY_ENTRIES;
+  }
+  saveHistory();
+}
+
 function loadHistory() {
   try {
     const parsed = JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf-8'));
@@ -457,20 +471,11 @@ function createTab(url = 'https://duckduckgo.com') {
     sendTabsUpdate();
   });
   view.webContents.on('did-navigate', (_e, navUrl) => {
-    tab.url = navUrl;
-    // Recarregar a mesma página não gera entrada nova: só atualiza a hora.
-    if (tab.historyEntry && tab.historyEntry.url === navUrl) {
-      tab.historyEntry.timestamp = Date.now();
-    } else {
-      tab.historyEntry = { id: nextHistoryId++, url: navUrl, title: '', timestamp: Date.now() };
-      history.unshift(tab.historyEntry);
-      if (history.length > MAX_HISTORY_ENTRIES) history.length = MAX_HISTORY_ENTRIES;
-    }
-    saveHistory();
+    recordNavigation(tab, navUrl);
     sendTabsUpdate();
   });
   view.webContents.on('did-navigate-in-page', (_e, navUrl) => {
-    tab.url = navUrl;
+    recordNavigation(tab, navUrl);
     sendTabsUpdate();
   });
   view.webContents.on('before-input-event', (event, input) => {
