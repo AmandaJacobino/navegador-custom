@@ -224,10 +224,61 @@ function startBookmarksManagerDrag() {
 }
 
 function stopBookmarksManagerDrag() {
+  stopBookmarksManagerResize();
   if (!bookmarksManagerDragging) return;
   bookmarksManagerDragging = false;
   clearInterval(bookmarksManagerDragInterval);
   bookmarksManagerDragInterval = null;
+}
+
+// Redimensionar pelas bordas segue o mesmo modelo do arraste: o processo
+// principal acompanha o cursor na tela. Cada borda mexe só nos lados que
+// ela toca (ex.: 'nw' move topo e esquerda), respeitando tamanho mínimo e
+// os limites da janela principal.
+const MANAGER_MIN_WIDTH = 320;
+const MANAGER_MIN_HEIGHT = 200;
+const MANAGER_RESIZE_EDGES = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
+let bookmarksManagerResize = null;
+
+function startBookmarksManagerResize(edge) {
+  if (!bookmarksManagerOpen || bookmarksManagerDragging || bookmarksManagerResize) return;
+  if (!MANAGER_RESIZE_EDGES.includes(edge)) return;
+  bookmarksManagerMoved = true;
+  bookmarksManagerResize = {
+    edge,
+    cursor: screen.getCursorScreenPoint(),
+    bounds: bookmarksManagerView.getBounds(),
+    interval: setInterval(applyBookmarksManagerResize, 16),
+  };
+}
+
+function applyBookmarksManagerResize() {
+  if (!bookmarksManagerResize || !mainWindow) return;
+  const { edge, cursor, bounds } = bookmarksManagerResize;
+  const now = screen.getCursorScreenPoint();
+  const dx = now.x - cursor.x;
+  const dy = now.y - cursor.y;
+  const content = mainWindow.getContentBounds();
+  let left = bounds.x;
+  let top = bounds.y;
+  let right = bounds.x + bounds.width;
+  let bottom = bounds.y + bounds.height;
+  if (edge.includes('w')) left = Math.min(Math.max(bounds.x + dx, 0), right - MANAGER_MIN_WIDTH);
+  if (edge.includes('e')) right = Math.min(Math.max(right + dx, left + MANAGER_MIN_WIDTH), content.width);
+  if (edge.includes('n')) top = Math.min(Math.max(bounds.y + dy, UI_HEIGHT), bottom - MANAGER_MIN_HEIGHT);
+  if (edge.includes('s')) bottom = Math.min(Math.max(bottom + dy, top + MANAGER_MIN_HEIGHT), content.height);
+  bookmarksManagerView.setBounds({
+    x: Math.round(left),
+    y: Math.round(top),
+    width: Math.round(right - left),
+    height: Math.round(bottom - top),
+  });
+}
+
+function stopBookmarksManagerResize() {
+  if (!bookmarksManagerResize) return;
+  clearInterval(bookmarksManagerResize.interval);
+  bookmarksManagerResize = null;
 }
 
 const BOOKMARK_MENU_WIDTH = 220;
@@ -790,6 +841,7 @@ ipcMain.handle('bookmarks:openManage', () => openBookmarksManager());
 ipcMain.handle('bookmarks:closeManager', () => closeBookmarksManager());
 ipcMain.handle('bookmarks:managerDragStart', () => startBookmarksManagerDrag());
 ipcMain.handle('bookmarks:managerDragEnd', () => stopBookmarksManagerDrag());
+ipcMain.handle('bookmarks:managerResizeStart', (_e, edge) => startBookmarksManagerResize(edge));
 ipcMain.handle('bookmarks:openMenu', (_e, anchorRect) => openBookmarkMenu(anchorRect));
 ipcMain.handle('bookmarks:closeMenu', () => closeBookmarkMenu());
 ipcMain.handle('bookmarks:get', () => bookmarks);

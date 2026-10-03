@@ -16,4 +16,5 @@ contextBridge.exposeInMainWorld('bookmarksAPI', {
   closeManager: () => ipcRenderer.invoke('bookmarks:closeManager'),
   startManagerDrag: () => ipcRenderer.invoke('bookmarks:managerDragStart'),
   endManagerDrag: () => ipcRenderer.invoke('bookmarks:managerDragEnd'),
+  startManagerResize: (edge) => ipcRenderer.invoke('bookmarks:managerResizeStart', edge),
 });

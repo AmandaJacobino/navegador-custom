@@ -14,6 +14,42 @@ managerHeader.addEventListener('mousedown', (e) => {
   window.bookmarksAPI.startManagerDrag();
 });
 document.addEventListener('mouseup', () => window.bookmarksAPI.endManagerDrag());
+
+// Redimensiona pelas bordas. Zona invisível de 6px; só o cursor muda.
+const RESIZE_ZONE = 6;
+const EDGE_CURSORS = {
+  n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize',
+  ne: 'nesw-resize', sw: 'nesw-resize', nw: 'nwse-resize', se: 'nwse-resize',
+};
+function edgeAt(x, y) {
+  const top = y < RESIZE_ZONE;
+  const bottom = y >= window.innerHeight - RESIZE_ZONE;
+  const left = x < RESIZE_ZONE;
+  const right = x >= window.innerWidth - RESIZE_ZONE;
+  const edge = (top ? 'n' : '') + (bottom ? 's' : '') + (left ? 'w' : '') + (right ? 'e' : '');
+  return edge || null;
+}
+// Destaca só os lados sob o cursor (accent), via variáveis CSS em bookmarks.html.
+function highlightEdge(edge) {
+  const style = document.documentElement.style;
+  for (const side of ['n', 's', 'e', 'w']) {
+    style.setProperty(`--hl-${side}`, edge && edge.includes(side) ? 'var(--accent)' : 'transparent');
+  }
+}
+document.addEventListener('mousemove', (e) => {
+  const edge = edgeAt(e.clientX, e.clientY);
+  document.documentElement.style.cursor = edge ? EDGE_CURSORS[edge] : '';
+  highlightEdge(edge);
+});
+document.addEventListener('mouseleave', () => {
+  document.documentElement.style.cursor = '';
+  highlightEdge(null);
+});
+document.addEventListener('mousedown', (e) => {
+  const edge = edgeAt(e.clientX, e.clientY);
+  if (!edge || e.button !== 0) return;
+  window.bookmarksAPI.startManagerResize(edge);
+});
 const newFolderBtn = document.getElementById('new-folder-btn');
 const newFolderRow = document.getElementById('new-folder-row');
 const confirmDeleteDialog = document.getElementById('confirm-delete-dialog');
