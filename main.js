@@ -462,6 +462,13 @@ function createTab(url = 'https://duckduckgo.com') {
     recordNavigation(tab, navUrl);
     sendTabsUpdate();
   });
+  view.webContents.on('found-in-page', (_e, result) => {
+    if (getActiveTab() !== tab) return;
+    mainWindow.webContents.send('find:result', {
+      active: result.activeMatchOrdinal,
+      total: result.matches,
+    });
+  });
   view.webContents.on('before-input-event', (event, input) => {
     if (handleShortcut(input)) event.preventDefault();
   });

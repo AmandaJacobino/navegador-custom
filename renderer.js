@@ -162,8 +162,15 @@ const findInput = document.getElementById('find-input');
 const findNextBtn = document.getElementById('find-next');
 const findPrevBtn = document.getElementById('find-prev');
 const findCloseBtn = document.getElementById('find-close');
+const findCount = document.getElementById('find-count');
+
+window.browserAPI.onFindResult(({ active, total }) => {
+  if (!findInput.value) return;
+  findCount.textContent = total ? `${active}/${total}` : '0/0';
+});
 
 function hideOverlays() {
+  findCount.textContent = '';
   findbar.classList.add('hidden');
   window.browserAPI.setOverlayHeight(0);
   window.browserAPI.findStop();
@@ -184,7 +191,10 @@ window.browserAPI.onToggleFindbar(() => {
   }
 });
 
-findInput.addEventListener('input', () => window.browserAPI.findStart(findInput.value));
+findInput.addEventListener('input', () => {
+  if (!findInput.value) findCount.textContent = '';
+  window.browserAPI.findStart(findInput.value);
+});
 findInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') window.browserAPI.findNext(findInput.value);
   if (e.key === 'Escape') hideOverlays();

@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('browserAPI', {
   findNext: (text) => ipcRenderer.invoke('find:next', text),
   findPrev: (text) => ipcRenderer.invoke('find:prev', text),
   findStop: () => ipcRenderer.invoke('find:stop'),
+  onFindResult: (callback) => ipcRenderer.on('find:result', (_e, data) => callback(data)),
   toggleBookmark: () => ipcRenderer.invoke('bookmarks:toggleCurrent'),
   openBookmarkMenu: (anchorRect) => ipcRenderer.invoke('bookmarks:openMenu', anchorRect),
   endPanelDrag: () => ipcRenderer.invoke('panel:dragEnd'),
