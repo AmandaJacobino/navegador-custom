@@ -1,4 +1,4 @@
-const { app, BrowserWindow, BrowserView, ipcMain, Menu, shell, dialog, screen } = require('electron');
+const { app, BrowserWindow, BrowserView, ipcMain, Menu, shell, dialog, screen, session } = require('electron');
 const path = require('path');
 const { openHistoryStore } = require('./history-store');
 const { createOverlayPanel } = require('./overlay-panel');
@@ -16,6 +16,10 @@ const LEGACY_HISTORY_FILE = path.join(app.getPath('userData'), 'history.json');
 const HISTORY_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 const HISTORY_PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000;
 let historyPruneTimer = null;
+// Env override keeps manual and automated testing from waiting 10 minutes.
+const TAB_DISCARD_AFTER_MS = Number(process.env.TAB_DISCARD_AFTER_MS) || 10 * 60 * 1000;
+const TAB_DISCARD_CHECK_MS = Math.min(60 * 1000, TAB_DISCARD_AFTER_MS / 2);
+let tabDiscardTimer = null;
 
 // Altura da barra de UI (abas + endereço) em pixels.
 // As páginas web (BrowserView) começam abaixo dessa altura.
@@ -27,7 +31,7 @@ let bookmarkMenuView = null; // BrowserView de overlay do dropdown da estrela
 let bookmarkMenuOpen = false;
 let printWindow = null;     // janela independente de impressão (Ctrl+P)
 let printTab = null;        // aba alvo da janela de impressão aberta
-let tabs = [];      // cada item: { id, view, title, url }
+let tabs = [];      // cada item: { id, view, title, url, muted, hiddenAt } — view é null quando a aba foi descartada
 let activeTabId = null;
 let previousTabId = null; // última aba ativa antes da atual, para Ctrl+Tab
 let nextTabId = 1;
@@ -426,7 +430,8 @@ function sendTabsUpdate() {
       title: t.title,
       url: t.url,
       muted: t.muted,
-      audible: t.view.webContents.isCurrentlyAudible(),
+      audible: t.view ? t.view.webContents.isCurrentlyAudible() : false,
+      discarded: !t.view,
       bookmarked: isBookmarked(t.url),
     })),
     activeTabId,
@@ -437,15 +442,23 @@ function sendTabsUpdate() {
 
 function createTab(url = 'https://duckduckgo.com') {
   const id = nextTabId++;
+  const tab = { id, view: null, title: 'Nova aba', url, muted: false, hiddenAt: null };
+  tabs.push(tab);
+  loadTabView(tab);
+  activateTab(id);
+  return id;
+}
+
+function loadTabView(tab) {
   const view = new BrowserView({
     webPreferences: {
       contextIsolation: true,
       sandbox: true,
     },
   });
-
-  const tab = { id, view, title: 'Nova aba', url, muted: false };
-  tabs.push(tab);
+  tab.view = view;
+  tab.findScrollFrom = null;
+  if (tab.muted) view.webContents.setAudioMuted(true);
 
   view.webContents.on('page-title-updated', (_e, title) => {
     tab.title = title;
@@ -479,7 +492,33 @@ function createTab(url = 'https://duckduckgo.com') {
   view.webContents.on('audio-state-changed', () => {
     sendTabsUpdate();
   });
-  view.webContents.session.on('will-download', (_e, item) => {
+
+  view.webContents.loadURL(tab.url);
+}
+
+// Libera a memória de uma aba inativa; URL e título ficam no objeto da aba
+// e activateTab recarrega a página quando ela voltar a ser usada.
+function discardTab(tab) {
+  if (!tab.view) return;
+  tab.view.webContents.destroy();
+  tab.view = null;
+}
+
+function discardIdleTabs() {
+  const cutoff = Date.now() - TAB_DISCARD_AFTER_MS;
+  let changed = false;
+  for (const tab of tabs) {
+    if (!tab.view || tab.id === activeTabId || tab === printTab) continue;
+    if (tab.hiddenAt == null || tab.hiddenAt > cutoff) continue;
+    if (tab.view.webContents.isCurrentlyAudible()) continue;
+    discardTab(tab);
+    changed = true;
+  }
+  if (changed) sendTabsUpdate();
+}
+
+function trackDownloads(ses) {
+  ses.on('will-download', (_e, item) => {
     const entry = {
       filename: item.getFilename(),
       path: item.getSavePath() || item.getFilename(),
@@ -495,10 +534,6 @@ function createTab(url = 'https://duckduckgo.com') {
       sendDownloadsUpdate();
     });
   });
-
-  view.webContents.loadURL(url);
-  activateTab(id);
-  return id;
 }
 
 function goToLastTab() {
@@ -513,8 +548,12 @@ function activateTab(id) {
   if (!tab) return;
   if (activeTabId != null && activeTabId !== id) {
     previousTabId = activeTabId;
+    const hidden = tabs.find((t) => t.id === activeTabId);
+    if (hidden) hidden.hiddenAt = Date.now();
   }
   activeTabId = id;
+  tab.hiddenAt = null;
+  if (!tab.view) loadTabView(tab);
   closeBookmarkMenu(); // setBrowserView abaixo remove todas as views, inclusive a do dropdown
   mainWindow.setBrowserView(tab.view);
   // setBrowserView troca TODAS as views da janela — se o gerenciador de
@@ -533,8 +572,10 @@ function closeTab(id) {
   const idx = tabs.findIndex((t) => t.id === id);
   if (idx === -1) return;
   const [tab] = tabs.splice(idx, 1);
-  mainWindow.removeBrowserView(tab.view);
-  tab.view.webContents.destroy();
+  if (tab.view) {
+    mainWindow.removeBrowserView(tab.view);
+    tab.view.webContents.destroy();
+  }
 
   if (activeTabId === id) {
     const next = tabs[idx] || tabs[idx - 1];
@@ -669,7 +710,7 @@ ipcMain.handle('tabs:toggleMute', (_e, id) => {
   const tab = tabs.find((t) => t.id === id);
   if (!tab) return;
   tab.muted = !tab.muted;
-  tab.view.webContents.setAudioMuted(tab.muted);
+  tab.view?.webContents.setAudioMuted(tab.muted);
   sendTabsUpdate();
 });
 ipcMain.handle('tabs:reorder', (_e, orderedIds) => {
@@ -837,7 +878,9 @@ app.whenReady().then(() => {
   }
   pruneHistory();
   historyPruneTimer = setInterval(pruneHistory, HISTORY_PRUNE_INTERVAL_MS);
+  trackDownloads(session.defaultSession);
   createMainWindow();
+  tabDiscardTimer = setInterval(discardIdleTabs, TAB_DISCARD_CHECK_MS);
 });
 
 function pruneHistory() {
@@ -846,6 +889,7 @@ function pruneHistory() {
 
 app.on('will-quit', () => {
   clearInterval(historyPruneTimer);
+  clearInterval(tabDiscardTimer);
   historyStore?.close();
 });
 
