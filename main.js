@@ -1,4 +1,4 @@
-const { app, BrowserWindow, BrowserView, ipcMain, Menu, shell, dialog, screen } = require('electron');
+const { app, BrowserWindow, BrowserView, ipcMain, Menu, shell, dialog, screen, session } = require('electron');
 const path = require('path');
 const { openHistoryStore } = require('./history-store');
 const { createOverlayPanel } = require('./overlay-panel');
@@ -479,7 +479,14 @@ function createTab(url = 'https://duckduckgo.com') {
   view.webContents.on('audio-state-changed', () => {
     sendTabsUpdate();
   });
-  view.webContents.session.on('will-download', (_e, item) => {
+
+  view.webContents.loadURL(url);
+  activateTab(id);
+  return id;
+}
+
+function trackDownloads(ses) {
+  ses.on('will-download', (_e, item) => {
     const entry = {
       filename: item.getFilename(),
       path: item.getSavePath() || item.getFilename(),
@@ -495,10 +502,6 @@ function createTab(url = 'https://duckduckgo.com') {
       sendDownloadsUpdate();
     });
   });
-
-  view.webContents.loadURL(url);
-  activateTab(id);
-  return id;
 }
 
 function goToLastTab() {
@@ -837,6 +840,7 @@ app.whenReady().then(() => {
   }
   pruneHistory();
   historyPruneTimer = setInterval(pruneHistory, HISTORY_PRUNE_INTERVAL_MS);
+  trackDownloads(session.defaultSession);
   createMainWindow();
 });
 
