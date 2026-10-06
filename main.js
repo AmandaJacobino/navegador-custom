@@ -463,6 +463,10 @@ function createTab(url = 'https://duckduckgo.com') {
     sendTabsUpdate();
   });
   view.webContents.on('found-in-page', (_e, result) => {
+    if (tab.findScrollFrom && result.activeMatchOrdinal) {
+      smoothFindScroll(view.webContents, tab.findScrollFrom);
+      tab.findScrollFrom = null;
+    }
     if (getActiveTab() !== tab) return;
     mainWindow.webContents.send('find:result', {
       active: result.activeMatchOrdinal,
@@ -773,19 +777,46 @@ ipcMain.handle('ui:set-overlay-height', (_e, px) => {
   layoutActiveView();
 });
 
+// Chromium's find-in-page scroll jumps and ignores CSS scroll-behavior, so we
+// record the position before searching and animate from it once the jump lands.
+// Runs in an isolated world so page scripts can't override scrollTo.
+const FIND_SCROLL_WORLD = 1001;
+
+function readScroll(webContents) {
+  return webContents
+    .executeJavaScriptInIsolatedWorld(FIND_SCROLL_WORLD, [{ code: '[scrollX, scrollY]' }])
+    .catch(() => null);
+}
+
+function smoothFindScroll(webContents, [fromX, fromY]) {
+  const code = `(() => {
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const toX = scrollX, toY = scrollY;
+    if (toX === ${fromX} && toY === ${fromY}) return;
+    scrollTo({ left: ${fromX}, top: ${fromY}, behavior: 'instant' });
+    scrollTo({ left: toX, top: toY, behavior: 'smooth' });
+  })()`;
+  webContents.executeJavaScriptInIsolatedWorld(FIND_SCROLL_WORLD, [{ code }]).catch(() => {});
+}
+
+async function findWithSmoothScroll(tab, text, options) {
+  tab.findScrollFrom = await readScroll(tab.view.webContents);
+  tab.view.webContents.findInPage(text, options);
+}
+
 ipcMain.handle('find:start', (_e, text) => {
   const tab = getActiveTab();
   if (!tab) return;
-  if (text) tab.view.webContents.findInPage(text);
-  else tab.view.webContents.stopFindInPage('clearSelection');
+  if (text) return findWithSmoothScroll(tab, text);
+  tab.view.webContents.stopFindInPage('clearSelection');
 });
 ipcMain.handle('find:next', (_e, text) => {
   const tab = getActiveTab();
-  if (tab && text) tab.view.webContents.findInPage(text, { forward: true, findNext: true });
+  if (tab && text) return findWithSmoothScroll(tab, text, { forward: true, findNext: true });
 });
 ipcMain.handle('find:prev', (_e, text) => {
   const tab = getActiveTab();
-  if (tab && text) tab.view.webContents.findInPage(text, { forward: false, findNext: true });
+  if (tab && text) return findWithSmoothScroll(tab, text, { forward: false, findNext: true });
 });
 ipcMain.handle('find:stop', () => {
   const tab = getActiveTab();
