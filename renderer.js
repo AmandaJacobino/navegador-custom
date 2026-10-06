@@ -162,8 +162,22 @@ const findInput = document.getElementById('find-input');
 const findNextBtn = document.getElementById('find-next');
 const findPrevBtn = document.getElementById('find-prev');
 const findCloseBtn = document.getElementById('find-close');
+const findCount = document.getElementById('find-count');
+
+function setFindCount(text, total) {
+  findCount.textContent = text;
+  findCount.classList.toggle('no-match', text !== '' && !total);
+  findPrevBtn.disabled = !total;
+  findNextBtn.disabled = !total;
+}
+
+window.browserAPI.onFindResult(({ active, total }) => {
+  if (!findInput.value) return;
+  setFindCount(`${total ? active : 0}/${total}`, total);
+});
 
 function hideOverlays() {
+  setFindCount('', 0);
   findbar.classList.add('hidden');
   window.browserAPI.setOverlayHeight(0);
   window.browserAPI.findStop();
@@ -184,9 +198,15 @@ window.browserAPI.onToggleFindbar(() => {
   }
 });
 
-findInput.addEventListener('input', () => window.browserAPI.findStart(findInput.value));
+findInput.addEventListener('input', () => {
+  if (!findInput.value) setFindCount('', 0);
+  window.browserAPI.findStart(findInput.value);
+});
 findInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') window.browserAPI.findNext(findInput.value);
+  if (e.key === 'Enter') {
+    if (e.shiftKey) window.browserAPI.findPrev(findInput.value);
+    else window.browserAPI.findNext(findInput.value);
+  }
   if (e.key === 'Escape') hideOverlays();
 });
 findNextBtn.addEventListener('click', () => window.browserAPI.findNext(findInput.value));
