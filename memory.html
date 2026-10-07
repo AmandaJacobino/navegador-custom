@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Consumo de memória</title>
+<link rel="stylesheet" href="panel-frame.css">
+<style>
+  :root {
+    --cat-tabs: #3987e5;
+    --cat-interface: #d95926;
+    --cat-gpu: #199e70;
+    --cat-main: #c98500;
+    --cat-services: #d55181;
+    --status-good: #0ca30c;
+    --status-warning: #fab219;
+    --status-critical: #d03b3b;
+  }
+
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  #panel-header { margin-bottom: 14px; }
+  .content { padding: 0 20px 20px 20px; }
+  section + section { margin-top: 22px; }
+  h2 {
+    margin: 0 0 10px 0;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  /* Hero: velocímetro de memória + termômetro de CPU */
+  .hero {
+    display: grid;
+    grid-template-columns: minmax(220px, 1.3fr) minmax(170px, 1fr);
+    gap: 12px;
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px;
+  }
+  .gauge-card { display: flex; flex-direction: column; align-items: center; }
+  .gauge-card h2, .cpu-card h2 { align-self: stretch; }
+  #ram-gauge { --gauge-color: var(--status-good); width: 100%; max-width: 230px; }
+  #ram-gauge[data-status="warning"] { --gauge-color: var(--status-warning); }
+  #ram-gauge[data-status="critical"] { --gauge-color: var(--status-critical); }
+  #ram-gauge svg { display: block; width: 100%; height: auto; overflow: visible; }
+  .gauge-track, .gauge-arc { fill: none; stroke-width: 12; stroke-linecap: round; }
+  .gauge-track { stroke: var(--surface-hover); }
+  .gauge-arc { stroke: var(--gauge-color); stroke-dasharray: 100; stroke-dashoffset: 100; }
+  .gauge-tick { stroke: var(--muted); stroke-width: 1.5; opacity: 0.6; }
+  .gauge-label { fill: var(--muted); font-size: 9px; font-family: inherit; }
+  #gauge-needle {
+    stroke: var(--ink);
+    stroke-width: 3;
+    stroke-linecap: round;
+    transform-box: view-box;
+    transform-origin: 100px 100px;
+    rotate: -90deg;
+  }
+  .gauge-pivot { fill: var(--ink); }
+  .gauge-pivot-ring { fill: var(--surface); stroke: var(--gauge-color); stroke-width: 2; }
+  .gauge-readout { margin-top: 4px; text-align: center; }
+  .big {
+    display: block;
+    font-size: 26px;
+    font-weight: 600;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+  }
+  .note { display: block; color: var(--muted); font-size: 12px; margin-top: 3px; }
+
+  .side { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .cpu-card { padding: 12px 14px; }
+  .cpu-card h2 { margin: 0; }
+  .cpu-row { display: flex; align-items: baseline; gap: 8px; margin-top: 6px; }
+  .cpu-card .big { font-size: 22px; }
+  /* Sem appearance: none — no Chromium ele esconde as barras ::-webkit-meter-*. */
+  #cpu-meter { display: block; width: 100%; height: 8px; margin-top: 10px; }
+  #cpu-meter::-webkit-meter-bar {
+    height: 8px;
+    background: var(--surface-hover);
+    border: none;
+    border-radius: 4px;
+  }
+  #cpu-meter::-webkit-meter-optimum-value,
+  #cpu-meter::-webkit-meter-suboptimum-value,
+  #cpu-meter::-webkit-meter-even-less-good-value { border-radius: 5px; }
+  #cpu-meter::-webkit-meter-optimum-value { background: var(--status-good); }
+  #cpu-meter::-webkit-meter-suboptimum-value { background: var(--status-warning); }
+  #cpu-meter::-webkit-meter-even-less-good-value { background: var(--status-critical); }
+
+  /* Distribuição por categoria */
+  #stack {
+    display: flex;
+    gap: 2px;
+    height: 10px;
+    border-radius: 5px;
+    overflow: hidden;
+  }
+  .segment { flex: none; width: 0; height: 100%; background: var(--seg-color); }
+  .segment[hidden] { display: none; }
+  .segment.first { border-radius: 5px 0 0 5px; }
+  .segment.last { border-radius: 0 5px 5px 0; }
+  .segment.first.last { border-radius: 5px; }
+  .breakdown { padding: 0 2px; }
+  #legend {
+    display: grid;
+    gap: 7px;
+    margin: 12px 0 0 0;
+    padding: 0;
+    list-style: none;
+    font-size: 12px;
+  }
+  #legend li { display: flex; align-items: center; gap: 8px; }
+  .legend-percent { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .swatch {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    background: var(--seg-color);
+  }
+  #stack-tooltip {
+    position: fixed;
+    z-index: 10;
+    pointer-events: none;
+    background: var(--surface-hover);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 12px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  }
+  #stack-tooltip[hidden] { display: none; }
+  #tip-label { display: block; font-weight: 600; }
+  #tip-value { display: block; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+  /* Lista compacta de abas */
+  .rows { margin: 0; padding: 0; list-style: none; }
+  .row {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    align-items: center;
+    column-gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .row:last-child { border-bottom: none; }
+  .row-main { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .row-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row-value { color: var(--ink); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+  .row-close {
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: 6px;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .row-close svg { width: 13px; height: 13px; }
+  .row-close:hover { background: var(--surface-hover); color: var(--ink); }
+  .row-close:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; color: var(--ink); }
+  .row-close:disabled { opacity: 0.4; cursor: default; }
+  .row-note { grid-column: 1 / -1; color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .row-note[hidden] { display: none; }
+  .bar-track { grid-column: 1 / -1; height: 4px; margin-top: 6px; border-radius: 2px; background: var(--surface-hover); }
+  .bar { width: 0; height: 100%; border-radius: 2px; background: var(--cat-tabs); }
+  .pill {
+    flex: none;
+    padding: 1px 7px;
+    border-radius: 10px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 10px;
+    font-weight: 600;
+  }
+  .pill[hidden] { display: none; }
+  .row.discarded .row-title { color: var(--muted); }
+  .row.discarded .row-value { color: var(--muted); font-size: 12px; }
+  .row.discarded .bar-track { display: none; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    @keyframes section-in {
+      from { opacity: 0; translate: 0 8px; }
+      to { opacity: 1; translate: 0 0; }
+    }
+    .reveal { animation: section-in 420ms ease-out both; animation-delay: calc(var(--i, 0) * 70ms); }
+
+    .gauge-arc { transition: stroke-dashoffset 700ms cubic-bezier(0.22, 1, 0.36, 1), stroke 300ms; }
+    #gauge-needle { transition: rotate 700ms cubic-bezier(0.34, 1.56, 0.64, 1); }
+    .gauge-pivot-ring { transition: stroke 300ms; }
+    .segment, .bar { transition: width 400ms ease-out; }
+
+    .row { transition: opacity 300ms ease-out, translate 300ms ease-out; }
+    @starting-style {
+      .row { opacity: 0; translate: 0 6px; }
+    }
+  }
+</style>
+</head>
+<body>
+  <div id="panel-header">
+    <h1>Consumo de memória</h1>
+    <button type="button" id="panel-close" title="Fechar (Ctrl+W)" aria-label="Fechar">✕</button>
+  </div>
+  <p class="visually-hidden">Atualizado a cada 2 segundos.</p>
+
+  <div class="content">
+    <section class="hero reveal" style="--i: 0" aria-label="Resumo">
+      <div class="card gauge-card">
+        <h2 id="ram-title">Memória</h2>
+        <div id="ram-gauge" role="meter" aria-labelledby="ram-title" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="—" data-status="good">
+          <svg viewBox="-4 -16 208 136" aria-hidden="true">
+            <path class="gauge-track" d="M 20 100 A 80 80 0 0 1 180 100" pathLength="100"/>
+            <path class="gauge-arc" id="gauge-arc" d="M 20 100 A 80 80 0 0 1 180 100" pathLength="100"/>
+            <line class="gauge-tick" x1="10" y1="100" x2="4" y2="100"/>
+            <line class="gauge-tick" x1="36.4" y1="36.4" x2="32.2" y2="32.2"/>
+            <line class="gauge-tick" x1="100" y1="10" x2="100" y2="4"/>
+            <line class="gauge-tick" x1="163.6" y1="36.4" x2="167.8" y2="32.2"/>
+            <line class="gauge-tick" x1="190" y1="100" x2="196" y2="100"/>
+            <text class="gauge-label" x="20" y="118" text-anchor="middle">0%</text>
+            <text class="gauge-label" x="24" y="24" text-anchor="middle">25%</text>
+            <text class="gauge-label" x="100" y="-5" text-anchor="middle">50%</text>
+            <text class="gauge-label" x="176" y="24" text-anchor="middle">75%</text>
+            <text class="gauge-label" x="180" y="118" text-anchor="middle">100%</text>
+            <line id="gauge-needle" x1="100" y1="100" x2="100" y2="34"/>
+            <circle class="gauge-pivot-ring" cx="100" cy="100" r="7"/>
+            <circle class="gauge-pivot" cx="100" cy="100" r="3"/>
+          </svg>
+        </div>
+        <div class="gauge-readout">
+          <span class="big" id="ram-value">—</span>
+          <span class="note" id="ram-note">—</span>
+        </div>
+      </div>
+
+      <div class="side">
+        <div class="card cpu-card">
+          <h2 id="cpu-title">CPU</h2>
+          <div class="cpu-row">
+            <span class="big" id="cpu-value">—</span>
+            <span class="note" id="cpu-note">—</span>
+          </div>
+          <meter id="cpu-meter" min="0" max="100" low="50" high="80" optimum="0" value="0" aria-labelledby="cpu-title"></meter>
+        </div>
+
+        <div class="breakdown" role="group" aria-label="Memória por categoria">
+          <div id="stack"></div>
+          <ul id="legend"></ul>
+          <div id="stack-tooltip" hidden>
+            <span id="tip-label"></span>
+            <span id="tip-value"></span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="reveal" style="--i: 2" aria-labelledby="tabs-title">
+      <h2 id="tabs-title">Abas</h2>
+      <ul class="rows" id="tab-list"></ul>
+    </section>
+  </div>
+
+  <script src="panel-frame.js"></script>
+  <script src="memory-renderer.js"></script>
+</body>
+</html>

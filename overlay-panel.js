@@ -71,6 +71,9 @@ function createOverlayPanel({ getWindow, getUiHeight, preload, page, defaultSize
       win.addBrowserView(v);
       open = true;
       layout();
+      // Removing a BrowserView doesn't make its document hidden, so panels
+      // that poll learn about open/close from this event instead.
+      v.webContents.send('panel:visibility', true);
     }
     v.webContents.focus();
   }
@@ -81,6 +84,7 @@ function createOverlayPanel({ getWindow, getUiHeight, preload, page, defaultSize
     stopInteraction();
     open = false;
     win.removeBrowserView(view);
+    view.webContents.send('panel:visibility', false);
   }
 
   function startDrag() {

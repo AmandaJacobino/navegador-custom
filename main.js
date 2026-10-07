@@ -1,14 +1,17 @@
-const { app, BrowserWindow, BrowserView, ipcMain, Menu, shell, dialog, screen, session } = require('electron');
+const { app, BrowserWindow, BrowserView, ipcMain, Menu, shell, dialog, screen, session, webContents } = require('electron');
 const path = require('path');
 const { openHistoryStore } = require('./history-store');
 const { createOverlayPanel } = require('./overlay-panel');
 const fs = require('fs');
+const os = require('os');
 
 const HISTORY_PRELOAD = path.join(__dirname, 'history-preload.js');
 const DOWNLOADS_PRELOAD = path.join(__dirname, 'downloads-preload.js');
 const PRINT_PRELOAD = path.join(__dirname, 'print-preload.js');
 const BOOKMARKS_PRELOAD = path.join(__dirname, 'bookmarks-preload.js');
 const BOOKMARK_MENU_PRELOAD = path.join(__dirname, 'bookmark-menu-preload.js');
+const APP_MENU_PRELOAD = path.join(__dirname, 'app-menu-preload.js');
+const MEMORY_PRELOAD = path.join(__dirname, 'memory-preload.js');
 const BOOKMARKS_FILE = path.join(app.getPath('userData'), 'bookmarks.json');
 const HISTORY_DB_FILE = path.join(app.getPath('userData'), 'history.sqlite');
 const LEGACY_HISTORY_FILE = path.join(app.getPath('userData'), 'history.json');
@@ -104,6 +107,7 @@ const historyPanel = createOverlayPanel({
 
 function openHistoryPanel() {
   bookmarksPanel.close();
+  memoryPanel.close();
   historyPanel.open();
 }
 
@@ -148,10 +152,26 @@ const bookmarksPanel = createOverlayPanel({
 
 function openBookmarksManager() {
   historyPanel.close();
+  memoryPanel.close();
   bookmarksPanel.open();
 }
 
-const PANELS = { bookmarks: bookmarksPanel, history: historyPanel };
+// Consumo de memória (issue #13), aberto pelo menu do navegador.
+const memoryPanel = createOverlayPanel({
+  getWindow: () => mainWindow,
+  getUiHeight: () => UI_HEIGHT,
+  preload: MEMORY_PRELOAD,
+  page: 'memory.html',
+  defaultSize: (content, uiHeight) => ({ width: 640, height: Math.min(600, Math.max(200, content.height - uiHeight - 32)) }),
+});
+
+function openMemoryPanel() {
+  bookmarksPanel.close();
+  historyPanel.close();
+  memoryPanel.open();
+}
+
+const PANELS = { bookmarks: bookmarksPanel, history: historyPanel, memory: memoryPanel };
 
 const BOOKMARK_MENU_WIDTH = 220;
 
@@ -181,6 +201,7 @@ let bookmarkMenuClosedAt = 0;
 
 function openBookmarkMenu(anchorRect) {
   if (bookmarkMenuOpen) { closeBookmarkMenu(); return; }
+  closeAppMenu();
   // Clicar de novo na estrela pra fechar tira o foco da view antes do clique
   // chegar aqui: o 'blur' já fechou o menu (bookmarkMenuOpen virou false) e,
   // sem essa guarda, este mesmo clique reabriria o dropdown na sequência.
@@ -211,6 +232,63 @@ function closeBookmarkMenu() {
   bookmarkMenuOpen = false;
   bookmarkMenuClosedAt = Date.now();
   mainWindow.removeBrowserView(bookmarkMenuView);
+}
+
+// Menu do navegador (botão hambúrguer): mesmo esquema de overlay do dropdown
+// da estrela, pelo mesmo motivo — precisa aparecer por cima da página.
+const APP_MENU_WIDTH = 220;
+let appMenuView = null;
+let appMenuOpen = false;
+let appMenuClosedAt = 0;
+
+function ensureAppMenuView() {
+  if (appMenuView) return appMenuView;
+  appMenuView = new BrowserView({
+    webPreferences: {
+      preload: APP_MENU_PRELOAD,
+      contextIsolation: true,
+      sandbox: true,
+    },
+  });
+  appMenuView.webContents.loadFile('app-menu.html');
+  appMenuView.webContents.on('blur', closeAppMenu);
+  appMenuView.webContents.on('before-input-event', (event, input) => {
+    if (input.type === 'keyDown' && input.key === 'Escape') closeAppMenu();
+  });
+  return appMenuView;
+}
+
+function openAppMenu(anchorRect) {
+  if (appMenuOpen) { closeAppMenu(); return; }
+  // Mesma guarda do dropdown da estrela: o blur do clique que fecha o menu
+  // chega antes deste clique e o reabriria.
+  if (Date.now() - appMenuClosedAt < 250) return;
+  if (!mainWindow) return;
+  closeBookmarkMenu();
+  const view = ensureAppMenuView();
+  mainWindow.addBrowserView(view);
+  appMenuOpen = true;
+  mainWindow.webContents.send('app-menu:state', true);
+  view.webContents.send('app-menu:show');
+  const width = APP_MENU_WIDTH;
+  const contentBounds = mainWindow.getContentBounds();
+  view.setBounds({ x: 0, y: 0, width, height: 10 });
+  view.webContents.executeJavaScript('document.body.offsetHeight').then((height) => {
+    if (!appMenuOpen) return;
+    const spaceBelow = contentBounds.height - anchorRect.bottom;
+    const top = spaceBelow >= height ? anchorRect.bottom + 4 : Math.max(UI_HEIGHT, anchorRect.top - height - 4);
+    const left = Math.min(anchorRect.right - width, contentBounds.width - width - 10);
+    view.setBounds({ x: Math.max(0, Math.round(left)), y: Math.round(top), width, height: Math.ceil(height) });
+    view.webContents.focus();
+  });
+}
+
+function closeAppMenu() {
+  if (!appMenuOpen || !mainWindow) return;
+  appMenuOpen = false;
+  appMenuClosedAt = Date.now();
+  mainWindow.removeBrowserView(appMenuView);
+  mainWindow.webContents.send('app-menu:state', false);
 }
 
 // bookmarks é uma lista plana de itens em árvore: cada um é um favorito
@@ -555,12 +633,14 @@ function activateTab(id) {
   tab.hiddenAt = null;
   if (!tab.view) loadTabView(tab);
   closeBookmarkMenu(); // setBrowserView abaixo remove todas as views, inclusive a do dropdown
+  closeAppMenu();
   mainWindow.setBrowserView(tab.view);
   // setBrowserView troca TODAS as views da janela — se o gerenciador de
   // favoritos estiver aberto, precisa voltar por cima da nova aba, senão
   // trocar de aba com ele aberto o fecharia sem querer.
   bookmarksPanel.reattach();
   historyPanel.reattach();
+  memoryPanel.reattach();
   layoutActiveView();
   // Trocar o BrowserView não move o foco de teclado sozinho — sem isso, os
   // atalhos só voltam a funcionar depois de um clique manual na aba.
@@ -686,9 +766,11 @@ function createMainWindow() {
   mainWindow.loadFile('index.html');
   mainWindow.on('resize', layoutActiveView);
   mainWindow.on('resize', closeBookmarkMenu);
+  mainWindow.on('resize', closeAppMenu);
   mainWindow.on('resize', () => {
     bookmarksPanel.layout();
     historyPanel.layout();
+    memoryPanel.layout();
   });
   mainWindow.on('blur', () => Object.values(PANELS).forEach((p) => p.stopInteraction()));
 
@@ -779,6 +861,79 @@ ipcMain.handle('panel:resizeStart', (_e, name, edge) => PANELS[name]?.startResiz
 ipcMain.handle('panel:dragEnd', () => Object.values(PANELS).forEach((p) => p.stopInteraction()));
 ipcMain.handle('bookmarks:openMenu', (_e, anchorRect) => openBookmarkMenu(anchorRect));
 ipcMain.handle('bookmarks:closeMenu', () => closeBookmarkMenu());
+ipcMain.handle('appMenu:open', (_e, anchorRect) => openAppMenu(anchorRect));
+ipcMain.handle('appMenu:close', () => closeAppMenu());
+ipcMain.handle('appMenu:openMemory', () => openMemoryPanel());
+
+const MEMORY_CATEGORIES = [
+  { key: 'tabs', label: 'Abas' },
+  { key: 'interface', label: 'Interface e painéis' },
+  { key: 'gpu', label: 'GPU' },
+  { key: 'main', label: 'Processo principal' },
+  { key: 'services', label: 'Serviços' },
+];
+
+// Pids que hospedam páginas internas do navegador (file://): interface, painéis, menus.
+function internalPids() {
+  const pids = new Set();
+  for (const wc of webContents.getAllWebContents()) {
+    if (wc.isDestroyed() || !wc.getURL().startsWith('file://')) continue;
+    const pid = wc.getOSProcessId();
+    if (pid) pids.add(pid);
+  }
+  return pids;
+}
+
+function classifyProcess(metric, tabPids, uiPids) {
+  if (tabPids.has(metric.pid)) return 'tabs';
+  if (uiPids.has(metric.pid)) return 'interface';
+  if (metric.type === 'GPU') return 'gpu';
+  if (metric.type === 'Browser') return 'main';
+  return 'services';
+}
+
+// Memória por aba: cada aba carregada aponta pro seu processo de renderização
+// (que pode ser compartilhado entre abas do mesmo site); abas descartadas não
+// têm processo. Os demais processos do app são agrupados por categoria.
+// percentCPUUsage é relativo a um núcleo; tudo é dividido pelos núcleos para as
+// linhas somarem o total e nenhum valor passar de 100%.
+ipcMain.handle('memory:get', () => {
+  const metrics = app.getAppMetrics();
+  const cpuCores = os.cpus().length || 1;
+  const cpuOf = (m) => m.cpu.percentCPUUsage / cpuCores;
+  const byPid = new Map(metrics.map((m) => [m.pid, m]));
+  const pids = tabs.map((t) => (t.view ? t.view.webContents.getOSProcessId() || null : null));
+  const tabsPerPid = new Map();
+  pids.forEach((pid) => { if (pid) tabsPerPid.set(pid, (tabsPerPid.get(pid) || 0) + 1); });
+  const uiPids = internalPids();
+  const categoryKB = Object.fromEntries(MEMORY_CATEGORIES.map((c) => [c.key, 0]));
+  for (const m of metrics) {
+    categoryKB[classifyProcess(m, tabsPerPid, uiPids)] += m.memory.workingSetSize;
+  }
+  const cpuSum = metrics.reduce((sum, m) => sum + cpuOf(m), 0);
+  return {
+    categories: MEMORY_CATEGORIES.map((c) => ({ ...c, memoryKB: categoryKB[c.key] })),
+    systemTotalKB: os.totalmem() / 1024,
+    cpuTotalPercent: Math.min(100, cpuSum),
+    cpuCores,
+    tabs: tabs.map((t, i) => {
+      const pid = pids[i];
+      const m = pid ? byPid.get(pid) : null;
+      return {
+        id: t.id,
+        title: t.title,
+        url: t.url,
+        active: t.id === activeTabId,
+        discarded: !t.view,
+        pid,
+        memoryKB: m ? m.memory.workingSetSize : null,
+        cpuPercent: m ? cpuOf(m) : null,
+        sharedProcess: pid ? tabsPerPid.get(pid) > 1 : false,
+      };
+    }),
+    totalKB: metrics.reduce((sum, m) => sum + m.memory.workingSetSize, 0),
+  };
+});
 ipcMain.handle('bookmarks:get', () => bookmarks);
 ipcMain.handle('bookmarks:remove', (_e, id) => removeItem(id));
 ipcMain.handle('bookmarks:rename', (_e, id, title) => renameItem(id, title));

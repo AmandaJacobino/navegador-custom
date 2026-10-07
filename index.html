@@ -119,6 +119,9 @@
   #toolbar button:disabled { opacity: 0.3; cursor: default; }
   #toolbar button:disabled:hover { background: none; }
   #btn-bookmark.active { color: var(--accent); }
+  #btn-menu { display: grid; place-items: center; padding: 0; }
+  #btn-menu svg { width: 16px; height: 16px; }
+  #btn-menu[aria-expanded="true"] { background: rgba(255,255,255,0.08); color: var(--text); }
 
   #address {
     flex: 1;
@@ -208,6 +211,9 @@
     <button id="btn-reload" title="Recarregar">⟳</button>
     <input id="address" type="text" placeholder="Buscar ou digitar um endereço" />
     <button id="btn-bookmark" title="Favoritos">☆</button>
+    <button id="btn-menu" title="Menu" aria-label="Menu" aria-expanded="false">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M3 4.5h10M3 8h10M3 11.5h10"/></svg>
+    </button>
   </div>
 
   <div id="findbar" class="hidden">
