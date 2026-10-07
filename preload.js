@@ -24,5 +24,7 @@ contextBridge.exposeInMainWorld('browserAPI', {
   onFindResult: (callback) => ipcRenderer.on('find:result', (_e, data) => callback(data)),
   toggleBookmark: () => ipcRenderer.invoke('bookmarks:toggleCurrent'),
   openBookmarkMenu: (anchorRect) => ipcRenderer.invoke('bookmarks:openMenu', anchorRect),
+  openAppMenu: (anchorRect) => ipcRenderer.invoke('appMenu:open', anchorRect),
+  onAppMenuState: (callback) => ipcRenderer.on('app-menu:state', (_e, open) => callback(open)),
   endPanelDrag: () => ipcRenderer.invoke('panel:dragEnd'),
 });

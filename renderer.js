@@ -5,6 +5,7 @@ const btnBack = document.getElementById('btn-back');
 const btnForward = document.getElementById('btn-forward');
 const btnReload = document.getElementById('btn-reload');
 const btnBookmark = document.getElementById('btn-bookmark');
+const btnMenu = document.getElementById('btn-menu');
 
 let currentState = { tabs: [], activeTabId: null, canGoBack: false, canGoForward: false };
 
@@ -139,6 +140,15 @@ btnBookmark.addEventListener('click', () => {
   window.browserAPI.openBookmarkMenu({
     left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom,
   });
+});
+btnMenu.addEventListener('click', () => {
+  const rect = btnMenu.getBoundingClientRect();
+  window.browserAPI.openAppMenu({
+    left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom,
+  });
+});
+window.browserAPI.onAppMenuState((open) => {
+  btnMenu.setAttribute('aria-expanded', String(open));
 });
 // Rede de segurança: se o arraste do gerenciador de favoritos (ver
 // bookmarks-renderer.js) terminar com o cursor sobre a toolbar em vez de
